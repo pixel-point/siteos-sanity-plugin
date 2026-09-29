@@ -1,0 +1,75 @@
+{
+  "version": "0.1.0",
+  "mode": "release",
+  "publishable": true,
+  "repository": "https://github.com/pixel-point/siteos-sanity-plugin",
+  "source": {
+    "repository": "https://github.com/pixel-point/siteos-platform",
+    "path": "packages/sanity-plugin",
+    "revision": "957c42c705a4d72f38667d187f456329634761ad",
+    "dirty": false
+  },
+  "files": {
+    ".gitignore": "83245f4be12b19a354b9dba51f65717519d781c4926b45d0e782b7dbce0c143a",
+    "CONTRIBUTING.md": "210445bdb49357b5d8c8b70e228dcd9d26ba44998af7dc13be8de5ad995b80a8",
+    "LICENSE": "3d74b039dec7e73c276df1ea50cc2e86d37adcd913efc287103f1f014dfeb13f",
+    "README.md": "d84e2b2521b21247e54038f54a8737058d645c2c7f10b3697388834091ac8f06",
+    "assets/siteos-logo.png": "0a0046796196da75f4ad8e46a6fd32668bb7b41baec30c95af4f9285bbb94fc9",
+    "assets/siteos-logo.svg": "7ceb1d06bf72ab0f969552cb6c9ea542b80269784c307c277a26d5ce1d82e489",
+    "examples/siteos.config.ts": "c171221bd264f8b15d0a2c5d264f3d489d0c9dd8d66893530f019f838d8dcf4c",
+    "package.json": "1465892faaec495ab3c62c237bc2410e4da1b78240c1653201681b46e93f7ce6",
+    "publication.json": "e3383ab6190c25ff86908673deb99fa7c43b6d9366ac620b4379c92777f0f5ef",
+    "scripts/project-public.mjs": "65a08408765b4d99080cfad43eb0e61d12d32fa78f19d4ebcae37ab9df368aed",
+    "scripts/project-public.test.mjs": "2dc574cc9d984573519d86123fbe550ef3411ae106436836c0e9a8521885528d",
+    "scripts/reconcile-public.mjs": "1546a99e45f75a71b4695b75a7d23578da0a569085836199df7bc071c63a841f",
+    "src/connection.test.ts": "edadf33bbf9df39780d780dac3cf888d7c2dfbbcfb1cba4ad3c1fc8e85af56b6",
+    "src/connection.ts": "0428b4f0c8a5d860f8f8c146dcfa42bcfa4e956e1084f5a15e97a37ec1927141",
+    "src/core.ts": "53cdccbeed577a67f65670a56bbed01201d6e6facfcf0255d8513f476c734244",
+    "src/corrections.test.ts": "d8a6723d136f8d2ad85056535a745d03ec6d225400429c191d91df5b5df599f3",
+    "src/corrections.ts": "3430acfb1e71fe5ae3f7a4cb46e0c97e7562da778981abd89f388fa2b4938026",
+    "src/document-view.test.ts": "2ccd24eef003b7f282f206f5ede0026329fe3af640e22f88a92db18ea3398e74",
+    "src/document-view.tsx": "95ef15e620de227ade5513fa7b93b2515edcbcafc5e877c3be453cbd722db60d",
+    "src/finding-card.tsx": "849f6631a137f8118dd5114a87bd82f6f0570d1dac2bb4f7433e9c75247887fa",
+    "src/index.tsx": "13d424b6c3ceeb867d294fa20ab7aaf531ecf14238fafbb6f73522d925b0e4bc",
+    "src/paths.ts": "aa9d732a56bdfa4f7ab7cb5c1abc964aaced5a7a190f8e9862ec4f294654f819",
+    "src/review-panel.tsx": "9aa98fdbb0f74560f4b9411fc5ebd5db0667747a92a4053456a1f408b08d05b5",
+    "src/seo-panel.tsx": "1b546981b50e4928a47ec2e5631c6d0f52b4c2f30aeaa3805a46ada194d1ad0a",
+    "src/seo-result.test.ts": "8a8a42ab02b5aa06877fe4406c4825dd5fd01bac4c8f231d53fe54c47a045d3c",
+    "src/seo-result.ts": "acc4f752732b7598bead1a10559c3db5896a210a777dda81711788a3c98c345a",
+    "src/seo-snapshot.test.ts": "aa572f6b92c3fbd0f056e4b67f91b6f30dd80212c1bfc89b5142b51a384ba910",
+    "src/seo-snapshot.ts": "12263875140884ee1d036d299a7487544b368be01f4c63d32c9e019e947b1f81",
+    "src/seo-types.ts": "312ffd9445b0e1eefef6130ed8119582f6cf4b9b6126327ea349e6ec4e936e3b",
+    "src/snapshot.test.ts": "2741f9fd9a4b43991da5f226245ce4c4fafce31fd155dc3240bf3555495c8667",
+    "src/snapshot.ts": "b4dd84f2a47b21caedd91ef8daf46148f1a85e7197aa2da82574760be224cdea",
+    "src/text-diff.test.ts": "7f388622f71cea5c717faf13592ca3716a9f954a48b09946d95f02ff5e124953",
+    "src/text-diff.ts": "a738301f5e0897b7448c1354b6ee00db30949021c95f0c8f0caad2811e50434a",
+    "src/types.ts": "58d93ac1ce3ef8547b723da76a0c4b9be73f0c517f6573c2ded775c238bcdea0",
+    "src/use-connection.ts": "4c5f037c6ee91af22dc8fb6e8d280d6aac0d73aab6ef3e88b7390f001cc43a68",
+    "tsconfig.build.json": "4818e926fb9e8755d476b359fa15393c8c4c2691a34860a9919b07964b5348d1",
+    "tsconfig.json": "287b1b92314fa1a6c83feb6b1b637862cd7b1a661c7aba9e6cf7aa6edd7f3b53",
+    "vitest.config.ts": "70d78466df4f6742d54efec36899dc72c35b7aed9643f880dc8227854ab9fd5d",
+    "pnpm-lock.yaml": "3d1a85646bd63bf292bca3f32c77842e690d4ddc42e650c2a5d7ff5014647bdb"
+  },
+  "digest": "795af6d3d2a6e22c19a6033713958f49234a69a4b4e34dc28619cc6de31d6dec",
+  "compatibility": {
+    "engines": {
+      "node": ">=22.12.0"
+    },
+    "peerDependencies": {
+      "sanity": "^6.16.0",
+      "react": "^19.2.8",
+      "react-dom": "^19.2.8",
+      "styled-components": "^6.1.15"
+    }
+  },
+  "verification": [
+    {
+      "command": "corepack pnpm --ignore-workspace install --ignore-scripts",
+      "status": "passed"
+    },
+    {
+      "command": "corepack pnpm --ignore-workspace verify",
+      "status": "passed"
+    }
+  ]
+}
