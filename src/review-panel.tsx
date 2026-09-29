@@ -12,8 +12,8 @@ import {
   TabList,
   TabPanel,
 } from "@sanity/ui";
-import { useEffect, useId, useRef, useState } from "react";
-import { useClient, useDataset, useProjectId, useDocumentSyncState } from "sanity";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useClient, useDataset, useProjectId, useDocumentSyncState, useSchema } from "sanity";
 import { useRouter } from "sanity/router";
 import { FindingCard, sourceLabel } from "./finding-card.js";
 import { prepareCorrection, validateCheckResult } from "./corrections.js";
@@ -48,6 +48,7 @@ export function ReviewPanel({
   formViewId?: string;
 }) {
   const adapter = useSiteosConnection(options);
+  const schema = useSchema();
   const client = useClient({ apiVersion: "2025-02-19" }).withConfig({
     useCdn: false,
     perspective: "raw",
@@ -69,6 +70,18 @@ export function ReviewPanel({
   const [connection, setConnection] = useState<Connection | null>(() => adapter?.current() ?? null);
   const [busy, setBusy] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [visibleSources, setVisibleSources] = useState(50);
+  const [visibleFindings, setVisibleFindings] = useState(50);
+  const sourceById = useMemo(
+    () => new Map(snapshot?.sources.map((source) => [source.id, source]) ?? []),
+    [snapshot],
+  );
+  const issueGroups = useMemo(() => {
+    const groups = new Map<string, NonNullable<typeof snapshot>["issues"]>();
+    for (const issue of snapshot?.issues ?? [])
+      groups.set(issue.message, [...(groups.get(issue.message) ?? []), issue]);
+    return [...groups.entries()];
+  }, [snapshot]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const operation = useRef<AbortController | null>(null);
@@ -111,6 +124,7 @@ export function ReviewPanel({
     return collectSnapshot({
       document: current,
       mappings: options.documentTypes,
+      schema,
       sanityProjectId,
       dataset,
       signal,
@@ -170,9 +184,20 @@ export function ReviewPanel({
         throw new Error("The document changed while preparing. Try again.");
       reviewedDocument.current = before;
       setSnapshot(fresh);
+      setVisibleSources(50);
+      setVisibleFindings(50);
       setResult(null);
       const checked = validateCheckResult(
-        await adapter.check({ connection, snapshot: fresh, signal }),
+        await adapter.check({
+          connection,
+          snapshot: fresh,
+          signal,
+          onProgress: ({ completed, total, result }) => {
+            if (signal.aborted) return;
+            setBusy(`Checking content: ${completed} of ${total} parts complete`);
+            setResult(result);
+          },
+        }),
         fresh,
       );
       signal.throwIfAborted();
@@ -186,6 +211,7 @@ export function ReviewPanel({
       const evidence = await collectSeoEvidence({
         document: latest.current,
         mapping: options.documentTypes[latest.current._type],
+        schema,
         sanityProjectId,
         dataset,
         signal,
@@ -354,6 +380,19 @@ export function ReviewPanel({
           <Flex align="center" gap={3} role="status" aria-live="polite">
             <Spinner />
             <Text size={1}>{busy}…</Text>
+            {operation.current && (
+              <Button
+                text="Cancel"
+                mode="ghost"
+                onClick={() => {
+                  operation.current?.abort();
+                  setBusy(null);
+                  setNotice(
+                    "Check stopped. Completed results remain visible; run the check again to finish.",
+                  );
+                }}
+              />
+            )}
           </Flex>
         )}
         {error && (
@@ -415,17 +454,27 @@ export function ReviewPanel({
                     {snapshot.documents.length === 1 ? "document" : "documents"}
                   </Text>
                 </Flex>
-                {snapshot.issues.map((issue, index) => (
-                  <Card key={index} padding={4} radius={2} tone="caution">
+                {issueGroups.map(([message, issues]) => (
+                  <Card key={message} padding={4} radius={2} tone="caution">
                     <Stack gap={3}>
-                      <Text size={1}>{issue.message}</Text>
-                      <Flex>
-                        <Button
-                          mode="ghost"
-                          text={`Open ${formatPath(issue.path)}`}
-                          onClick={() => navigate(issue.documentId, issue.documentType, issue.path)}
-                        />
-                      </Flex>
+                      <Text size={1}>
+                        {message} {issues.length > 1 ? `(${issues.length} fields)` : ""}
+                      </Text>
+                      <details>
+                        <summary>Show affected fields</summary>
+                        <Stack gap={2} paddingTop={3}>
+                          {issues.map((issue, index) => (
+                            <Button
+                              key={index}
+                              mode="ghost"
+                              text={`Open ${formatPath(issue.path)}`}
+                              onClick={() =>
+                                navigate(issue.documentId, issue.documentType, issue.path)
+                              }
+                            />
+                          ))}
+                        </Stack>
+                      </details>
                     </Stack>
                   </Card>
                 ))}
@@ -433,16 +482,18 @@ export function ReviewPanel({
                   <Stack gap={4}>
                     <Flex gap={3} align="center">
                       <Heading size={1}>
-                        {result.findings.length
-                          ? "Suggested corrections"
-                          : "No confirmed corrections"}
+                        {result.coverage && result.coverage.completed < result.coverage.total
+                          ? `Partial results: ${result.coverage.completed} of ${result.coverage.total} parts`
+                          : result.findings.length
+                            ? "Suggested corrections"
+                            : "No confirmed corrections"}
                       </Heading>
                       {!!result.findings.length && (
                         <Badge tone="caution">{result.findings.length}</Badge>
                       )}
                     </Flex>
-                    {result.findings.map((finding) => {
-                      const source = snapshot.sources.find((item) => item.id === finding.sourceId)!;
+                    {result.findings.slice(0, visibleFindings).map((finding) => {
+                      const source = sourceById.get(finding.sourceId)!;
                       return (
                         <FindingCard
                           key={finding.id}
@@ -457,6 +508,13 @@ export function ReviewPanel({
                         />
                       );
                     })}
+                    {result.findings.length > visibleFindings && (
+                      <Button
+                        text={`Show more corrections (${result.findings.length - visibleFindings} remaining)`}
+                        mode="ghost"
+                        onClick={() => setVisibleFindings((count) => count + 50)}
+                      />
+                    )}
                     {result.limitations.map((limit, index) => (
                       <Text key={index} size={1} muted style={{ lineHeight: 1.6 }}>
                         {limit}
@@ -479,60 +537,71 @@ export function ReviewPanel({
                         Content included in this check
                       </Text>
                     </Box>
-                    <Stack paddingX={4} paddingBottom={4} gap={4}>
-                      <Text size={1} muted>
-                        These are the selected text sections{" "}
-                        {result
-                          ? "sent to SiteOS for this check"
-                          : "that will be sent when you run a check"}
-                        . Related content is included for context.
-                      </Text>
-                      {snapshot.sources.map((source, index) => (
-                        <Card key={source.id} borderTop={index > 0} paddingTop={index > 0 ? 4 : 0}>
-                          <Stack gap={3}>
-                            <Flex align="center" justify="space-between" wrap="wrap" gap={3}>
-                              <Flex align="center" wrap="wrap" gap={2}>
-                                <Text size={1} weight="semibold">
-                                  {sourceLabel(source)}
-                                </Text>
-                                {source.documentId !== snapshot.documentId && (
-                                  <Badge fontSize={0}>Related document</Badge>
-                                )}
+                    {previewOpen && (
+                      <Stack paddingX={4} paddingBottom={4} gap={4}>
+                        <Text size={1} muted>
+                          These are the selected text sections for review. Large documents are sent
+                          to SiteOS in parts when you run a check . Related content is included for
+                          context.
+                        </Text>
+                        {snapshot.sources.slice(0, visibleSources).map((source, index) => (
+                          <Card
+                            key={source.id}
+                            borderTop={index > 0}
+                            paddingTop={index > 0 ? 4 : 0}
+                          >
+                            <Stack gap={3}>
+                              <Flex align="center" justify="space-between" wrap="wrap" gap={3}>
+                                <Flex align="center" wrap="wrap" gap={2}>
+                                  <Text size={1} weight="semibold">
+                                    {sourceLabel(source)}
+                                  </Text>
+                                  {source.documentId !== snapshot.documentId && (
+                                    <Badge fontSize={0}>Related document</Badge>
+                                  )}
+                                </Flex>
+                                <Button
+                                  text="Open field"
+                                  mode="bleed"
+                                  fontSize={1}
+                                  onClick={() =>
+                                    navigate(source.documentId, source.documentType, source.path)
+                                  }
+                                />
                               </Flex>
-                              <Button
-                                text="Open field"
-                                mode="bleed"
-                                fontSize={1}
-                                onClick={() =>
-                                  navigate(source.documentId, source.documentType, source.path)
-                                }
-                              />
-                            </Flex>
-                            <Text
-                              size={1}
-                              muted
-                              style={{
-                                whiteSpace: "pre-wrap",
-                                overflowWrap: "anywhere",
-                                lineHeight: 1.6,
-                              }}
-                            >
-                              {source.text}
-                            </Text>
-                          </Stack>
-                        </Card>
-                      ))}
-                      {(section === "text" ? stale : seoStale) && (
-                        <Flex>
+                              <Text
+                                size={1}
+                                muted
+                                style={{
+                                  whiteSpace: "pre-wrap",
+                                  overflowWrap: "anywhere",
+                                  lineHeight: 1.6,
+                                }}
+                              >
+                                {source.text}
+                              </Text>
+                            </Stack>
+                          </Card>
+                        ))}
+                        {snapshot.sources.length > visibleSources && (
                           <Button
-                            text="Refresh preview"
+                            text={`Show more content (${snapshot.sources.length - visibleSources} remaining)`}
                             mode="ghost"
-                            disabled={!!busy || !document}
-                            onClick={prepare}
+                            onClick={() => setVisibleSources((count) => count + 50)}
                           />
-                        </Flex>
-                      )}
-                    </Stack>
+                        )}
+                        {(section === "text" ? stale : seoStale) && (
+                          <Flex>
+                            <Button
+                              text="Refresh preview"
+                              mode="ghost"
+                              disabled={!!busy || !document}
+                              onClick={prepare}
+                            />
+                          </Flex>
+                        )}
+                      </Stack>
+                    )}
                   </details>
                 </Card>
                 <Text size={0} muted style={{ lineHeight: 1.6 }}>

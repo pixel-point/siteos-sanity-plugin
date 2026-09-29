@@ -11,9 +11,11 @@ export type DocumentMapping = {
   fields: readonly {
     path: FieldPath;
     role: ContentRole;
-    format?: "text" | "portableText";
+    format?: "text" | "portableText" | "content";
     required?: boolean;
   }[];
+  /** Exclude non-editorial subtrees inside selected content. */
+  exclude?: readonly FieldPath[];
   references?: readonly FieldPath[];
   locale?: FieldPath;
   seo?: SeoMapping;
@@ -79,6 +81,8 @@ export type CheckResult = {
   fingerprint: string;
   findings: Finding[];
   limitations: string[];
+  coverage?: { completed: number; total: number };
+  complete?: boolean;
 };
 
 /** SiteOS adapter boundary. Credentials never belong in Studio configuration. */
@@ -97,6 +101,7 @@ export interface SiteosConnectionAdapter {
     connection: Connection;
     snapshot: ContentSnapshot;
     signal: AbortSignal;
+    onProgress?(progress: { completed: number; total: number; result: CheckResult }): void;
   }): Promise<CheckResult>;
 }
 export type SiteosPluginOptions = {

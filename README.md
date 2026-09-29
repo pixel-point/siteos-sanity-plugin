@@ -6,7 +6,7 @@ Check SEO fields and review writing before publishing, directly in Sanity Studio
 a **🔍 SEO/GEO Audit** document tab with **SEO** first and **Text** second. An administrator connects
 the Studio to a SiteOS Project once; authorized Sanity editors use that shared connection.
 
-**First release: 0.1.0.** Supported Studio versions and setup are listed below. Shared connection
+**Version 0.2.0.** Supported Studio versions and setup are listed below. Shared connection
 persistence has been tested against a real Sanity dataset. Access from a second actual Sanity
 editor account and custom Sanity roles has not yet been verified; confirm the secret-document
 permissions described below before a team rollout.
@@ -43,7 +43,7 @@ not add the document tab: configure the existing Structure tool next.
 For local development, install a reviewed packed artifact instead:
 
 ```sh
-pnpm add /absolute/path/to/siteoshq-sanity-0.1.0.tgz
+pnpm add /absolute/path/to/siteoshq-sanity-0.2.0.tgz
 ```
 
 ## 2. Configure your existing document types
@@ -131,8 +131,7 @@ and related-document suggestions open their source for manual editing. Publishin
 ## SEO mapping and coverage
 
 Map only fields that your website actually uses. The `seo` configuration is optional; title and
-description fall back to the first content field with that role, and `portableText` falls back to
-mapped Portable Text fields. Override them with `seo.title`, `seo.description` and
+description fall back to the first content field with that role, and content roots fall back to mapped Portable Text / `content` fields. Override them with `seo.title`, `seo.description` and
 `seo.portableText: [["body"]]` when the content and SEO mappings differ. No slug or primary H1
 is guessed. Missing configuration and read failures remain visibly unverified.
 
@@ -146,20 +145,70 @@ is guessed. Missing configuration and read failures remain visibly unverified.
 - Links: standard Portable Text `link` (`href`) and `internalLink` (`reference`) annotations,
   plus configured object fields/arrays. `href`, `text` and `reference` mappings are relative paths.
   Checks cover syntax, placeholders, empty labels and linked-document availability. No HTTP
-  fetches or fragment-target checks occur. Custom blocks need explicit mappings.
+  fetches or fragment-target checks occur. Nested custom objects are traversed using the Studio schema; nonstandard link shapes need explicit mappings.
 - Slugs: mapped string (typically `slug.current`), empty values and suspicious path characters.
   Unicode slugs are accepted. Final website routes and redirects are not inferred.
 - Duplicates: exact title/description/slug values among accessible documents of the same type and
   mapped locale, in `drafts` or `published` perspective. Both versions of the current document
-  are excluded; at most 10 matching documents per field are shown. Set `seo.duplicates: false` to
+  are excluded; matching documents are read in pages and all matches are retained. Set `seo.duplicates: false` to
   disable these reads. This is not a whole-website or cross-schema duplicate audit.
 
-Each SEO check inspects at most 200 entries per configured collection, includes at most 100 items
-per section, and sends at most 128 KB. Limits and unsupported content remain visible.
+Large checks are automatically divided into bounded API requests, then combined. There is no
+100-section or 200-item cutoff for the document. Heading order, all image/link observations and
+paginated duplicate matches survive batching. Individual metadata values support up to 6,000
+characters; invalid values and unsupported paths remain visibly unverified.
 The endpoint evaluates evidence without AI, a worker or saved history. Results belong to that
 revision; opening either section does not launch a check. Other documents may change after the
-check; rerun it before relying on duplicate results. Canonical, robots, HTTP status, rendered markup
+check; rerun it before relying on duplicate results. Published canonical/robots tags, HTTP status, rendered markup
 and actual indexing still require a website audit.
+
+### Structured content and extended SEO (0.2.0)
+
+Existing mappings continue to work, including nested custom blocks inside `portableText`. For a
+page builder, select its root with `format: "content"`. Do not select the entire document: choose
+editorial roots and related document types deliberately.
+
+```ts
+{
+  fields: [
+    {path: ["seo", "title"], role: "title"},
+    {path: ["seo", "description"], role: "description"},
+    {path: ["sections"], role: "body", format: "content"},
+  ],
+  exclude: [["sections", {_key: "internal-settings"}]],
+  seo: {
+    canonicalUrl: ["seo", "canonicalUrl"],
+    noIndex: ["seo", "noIndex"],
+    socialImage: ["seo", "socialImage"],
+    focusKeyword: ["seo", "focusKeyword"],
+    titleFallback: {path: ["title"]},
+    descriptionFallback: "Use the actual website default here",
+    customTypes: {
+      hero: {headings: [{path: ["heading"], level: 1}]},
+      callout: {headings: [{path: ["title"], level: 2}]},
+    },
+  },
+}
+```
+
+Add only mappings that exist in your schema. Heading levels must match the website renderer.
+Fallbacks may be literal strings or a field path; configure them only after checking the website's
+metadata logic. A used fallback is identified in the result and excluded from duplicate-field
+queries. These declarations cannot evaluate runtime templates or computed metadata.
+
+- **Canonical URL:** validates an explicit absolute HTTP(S) override and flags fragments. Empty
+  means the website default must be verified; it is not automatically a missing-canonical error.
+- **Indexing preference:** shows whether `noIndex` is enabled. This can be intentional; it does
+  not prove what robots tags the site renders or whether Google has indexed a page.
+- **Social image:** checks asset presence and source dimensions where available. A missing override
+  prompts review of the website fallback; cropping and generated Open Graph tags are not checked.
+- **Focus keyword:** optional phrase matching in title/description as editorial guidance. It is
+  not keyword density, a ranking score or a visibility guarantee.
+
+Version 0.2.0 requires a SiteOS backend supporting SEO evidence v2. The hosted backend is upgraded
+before npm release; self-hosted installations must upgrade the backend first. Existing 0.1 clients
+remain supported by the backend. Install the new package, update mappings for the additional fields,
+and rebuild Studio; reconnecting is not needed when the origin/dataset stays the same.
 
 ## Connection and permissions
 
@@ -180,9 +229,11 @@ also needs permission to create/update it. No additional permissions are granted
 
 AI Text checks use the selected Organization's SEO credits. Identical text snapshots reuse a saved result for
 seven days. Credit-limited jobs pause and can be resumed by an explicit Check text action;
-interrupted jobs return partial results and are not silently retried. Fixed daily limits are
-50 AI checks per installation and 500 per Organization. Deterministic SEO checks do not use these
-AI jobs or credits. API failure never blocks Sanity publication.
+interrupted jobs return partial results and are not silently retried. There is no fixed daily
+check quota. Active queues, request sizes and provider concurrency remain bounded. The Text tab
+shows completed parts and supports cancellation; cancelling stops subsequent requests, but a
+server job already admitted may finish and use credits. Deterministic SEO checks do not use AI
+jobs or credits. API failure never blocks Sanity publication.
 
 ## Troubleshooting
 
@@ -196,7 +247,7 @@ AI jobs or credits. API failure never blocks Sanity publication.
 | Works locally, not in hosted Studio       | Connect from the hosted origin. Keep the exact host and dataset; installations are origin-bound.                                                                       |
 | Other editors cannot use the connection   | Verify their Sanity role can read the shared connection document and the mapped content. Do not expose the credential in config or make it a public root document.     |
 | Section is not configured                 | Map the actual field names under `seo`; title/description and Portable Text have the documented fallbacks.                                                             |
-| Unsupported custom blocks                 | Map their supported string, image or link fields explicitly. The plugin does not guess an arbitrary page-builder schema.                                               |
+| Unsupported custom blocks                 | Map the content root with `format: "content"`; stored nested text is traversed. Configure custom heading levels and unusual link shapes explicitly.                    |
 | Text check is disabled, paused or partial | Check the selected environment's AI availability, credits and worker. SEO checks are independent. Resume a paused Text check explicitly.                               |
 | Correction is stale                       | Wait for Sanity to finish saving, run a new check and review its result.                                                                                               |
 
@@ -220,9 +271,16 @@ discover; it is not required to install a published package.
   field itself; its text blocks retain their keyed source paths.
 - Related document types must also be mapped. Draft reviews prefer referenced drafts; published
   reviews only read published references. Cross-dataset references and release versions are not
-  supported in this preview.
-- Reviews are bounded to 20 documents, depth 3, 100 reference lookups, 100 text sections, 24,000 text
-  characters and a 128 KB serialized snapshot. Missing or omitted context is surfaced explicitly.
+  supported.
+- Complete selected content and configured related documents are collected without a total section,
+  character, reference-count or reference-depth cap. Cycles are deduplicated. Each Text request
+  holds at most 100 source parts, 20 documents and 24,000 characters within 128 KB; this is a batch
+  size, not a document cutoff. Long fields are split without dropping their remainder.
+- The schema guides nested object/array traversal. Code blocks, inline code, URL/configuration
+  fields and enumerated options are excluded from prose. Use `exclude` for other non-editorial
+  subtrees. Arrays of strings are reviewed read-only; object arrays require unique stable keys.
+  Paths support 32 segments. Dynamic inline values and inaccessible references remain explicit
+  limitations; arbitrary embeds, renderer logic and fetched remote content are not inferred.
 - Reference reads use the current Studio user's permissions. Source revisions and exact selected
   content contribute to the fingerprint used to reject stale results.
 - Applying SiteOS suggestions requires an explicit click and a revision-checked patch

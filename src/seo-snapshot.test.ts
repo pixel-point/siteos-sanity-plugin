@@ -78,7 +78,13 @@ describe("Sanity SEO evidence adapter", () => {
     const result = await collect({ query });
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("locale == $locale"),
-      { type: "page", self: ["drafts.page", "page", "drafts.page"], value: "Page", locale: "es" },
+      {
+        type: "page",
+        self: ["drafts.page", "page", "drafts.page"],
+        value: "Page",
+        locale: "es",
+        after: "",
+      },
       expect.any(AbortSignal),
       "drafts",
     );
@@ -107,14 +113,14 @@ describe("Sanity SEO evidence adapter", () => {
     expect(result.limitations.map((l) => l.section)).toContain("links");
     expect(result.limitations.map((l) => l.section)).toContain("duplicates");
   });
-  it("bounds duplicate matches and distinguishes absent fields from invalid collections", async () => {
+  it("retains duplicate matches and distinguishes absent fields from invalid collections", async () => {
     const matches = Array.from({ length: 11 }, (_, n) => ({ _id: `page-${n}`, _type: "page" }));
     const result = await collect({
       document: { ...document, body: "not Portable Text" },
       query: async () => matches,
     });
-    expect(result.duplicates?.[0]?.matches).toHaveLength(10);
-    expect(result.duplicates?.[0]?.more).toBe(true);
+    expect(result.duplicates?.[0]?.matches).toHaveLength(11);
+    expect(result.duplicates?.[0]?.more).toBe(false);
     expect(result.limitations.map((l) => l.section)).toEqual(
       expect.arrayContaining(["headings", "images", "links"]),
     );
@@ -130,5 +136,25 @@ describe("Sanity SEO evidence adapter", () => {
     await expect(
       collect({ mapping: { ...mapping, seo: { title: ["title] | *[_type"] } } }),
     ).rejects.toThrow("field names");
+  });
+  it("reads duplicate pages beyond the first 100 matches using a stable cursor", async () => {
+    const matches = Array.from({ length: 105 }, (_, n) => ({
+      _id: `other-${String(n).padStart(3, "0")}`,
+      _type: "page",
+    }));
+    const query = vi.fn(async (_q: string, params: Record<string, unknown>) =>
+      params.value === "Page"
+        ? matches.filter((row) => row._id > String(params.after)).slice(0, 100)
+        : [],
+    );
+    const result = await collect({ query });
+    expect(result.duplicates?.[0]?.matches).toHaveLength(105);
+    expect(result.duplicates?.[0]?.matches.at(-1)?.documentId).toBe("other-104");
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("order(_id asc)"),
+      expect.objectContaining({ after: "other-099" }),
+      expect.any(AbortSignal),
+      "drafts",
+    );
   });
 });

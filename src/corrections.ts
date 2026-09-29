@@ -6,15 +6,25 @@ export function validateCheckResult(value: CheckResult, snapshot: ContentSnapsho
     !value ||
     value.fingerprint !== snapshot.fingerprint ||
     !Array.isArray(value.findings) ||
-    value.findings.length > 100 ||
     !Array.isArray(value.limitations) ||
-    value.limitations.length > 50 ||
     value.limitations.some((item) => typeof item !== "string" || item.length > 2000)
   )
     throw new Error("The check returned an invalid or outdated result.");
+  if (value.complete !== undefined && typeof value.complete !== "boolean")
+    throw new Error("Invalid check completeness.");
+  if (
+    value.coverage &&
+    (!Number.isInteger(value.coverage.total) ||
+      value.coverage.total < 1 ||
+      !Number.isInteger(value.coverage.completed) ||
+      value.coverage.completed < 0 ||
+      value.coverage.completed > value.coverage.total)
+  )
+    throw new Error("Invalid check coverage.");
+  const sources = new Map(snapshot.sources.map((source) => [source.id, source]));
   const ids = new Set<string>();
   for (const finding of value.findings) {
-    const source = snapshot.sources.find((item) => item.id === finding?.sourceId);
+    const source = sources.get(finding?.sourceId);
     if (
       !source ||
       typeof finding.id !== "string" ||

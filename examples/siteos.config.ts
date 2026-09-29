@@ -14,6 +14,12 @@ export const siteosOptions = {
       references: [["author"]],
       seo: {
         slug: ["slug", "current"],
+        // For page builders add a field with format: "content" at the editorial root.
+        // Optional schema-specific settings:
+        // canonicalUrl: ["seo", "canonicalUrl"], noIndex: ["seo", "noIndex"],
+        // socialImage: ["seo", "socialImage"], focusKeyword: ["seo", "focusKeyword"],
+        // titleFallback: {path: ["title"]}, descriptionFallback: "Actual website default",
+        // customTypes: {callout: {headings: [{path: ["title"], level: 2}]}},
         // Add primaryHeading: ["title"] only if your website renders title as its H1.
         // Add images: [{path: ["heroImage"], alt: ["alt"]}] for separate image fields.
       },

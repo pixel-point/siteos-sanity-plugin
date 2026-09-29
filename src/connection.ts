@@ -1,3 +1,5 @@
+import { checkSeoBatches } from "./seo-batches.js";
+import { checkTextBatches } from "./text-batches.js";
 import type { Connection, SiteosConnectionAdapter, CheckResult } from "./types.js";
 import type { SeoCheckResult } from "./seo-types.js";
 export type StoredConnection = { token: string; connection: Connection; siteosOrigin: string };
@@ -165,14 +167,19 @@ export function createHostedConnection(input: {
       )
         throw new Error("The shared connection changed. Close and reopen this review.");
       validate(value);
-      return api<SeoCheckResult>(
-        "/seo-checks",
-        AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+      return checkSeoBatches({
         evidence,
-        value.token,
-      );
+        signal,
+        check: (batch) =>
+          api<SeoCheckResult>(
+            "/seo-checks",
+            AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+            batch,
+            value.token,
+          ),
+      });
     },
-    async check({ connection, snapshot, signal }) {
+    async check({ connection, snapshot, signal, onProgress }) {
       const value = await input.store.read(signal);
       if (
         !value ||
@@ -182,30 +189,42 @@ export function createHostedConnection(input: {
       )
         throw new Error("The shared connection changed. Close and reopen this review.");
       validate(value);
-      const bounded = AbortSignal.any([signal, AbortSignal.timeout(1200000)]);
-      const job = await api<{ id: string }>("/checks", bounded, snapshot, value.token);
-      let first = true;
-      for (;;) {
-        const state = await api<{
-          state: string;
-          result: CheckResult | null;
-          reason: string | null;
-        }>(`/checks/${encodeURIComponent(job.id)}`, bounded, undefined, value.token);
-        if (state.result) return state.result;
-        if (state.state === "paused") {
-          if (first) {
-            await api(`/checks/${encodeURIComponent(job.id)}/continue`, bounded, {}, value.token);
+      return checkTextBatches({
+        snapshot,
+        signal,
+        onProgress,
+        check: async (batch) => {
+          const bounded = AbortSignal.any([signal, AbortSignal.timeout(1200000)]);
+          const job = await api<{ id: string }>("/checks", bounded, batch, value.token);
+          let first = true;
+          for (;;) {
+            const state = await api<{
+              state: string;
+              result: CheckResult | null;
+              reason: string | null;
+            }>(`/checks/${encodeURIComponent(job.id)}`, bounded, undefined, value.token);
+            if (state.result) return state.result;
+            if (state.state === "paused") {
+              if (first) {
+                await api(
+                  `/checks/${encodeURIComponent(job.id)}/continue`,
+                  bounded,
+                  {},
+                  value.token,
+                );
+                first = false;
+                await wait(bounded, 1500);
+                continue;
+              }
+              throw new Error(
+                "This check is paused. Check your organization’s SEO credits, then select Check with SiteOS to continue.",
+              );
+            }
             first = false;
             await wait(bounded, 1500);
-            continue;
           }
-          throw new Error(
-            "This check is paused. Check your organization’s SEO credits, then select Check with SiteOS to continue.",
-          );
-        }
-        first = false;
-        await wait(bounded, 1500);
-      }
+        },
+      });
     },
   };
 }

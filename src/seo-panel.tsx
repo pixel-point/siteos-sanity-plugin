@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Badge, Box, Button, Card, Flex, Heading, Stack, Text } from "@sanity/ui";
 import type { SeoCheckResult, SeoEvidence } from "./seo-types.js";
 import type { FieldPath } from "./types.js";
@@ -17,6 +18,7 @@ export function SeoPanel({
   evidence: SeoEvidence | null;
   onNavigate(documentId: string, documentType: string, path: FieldPath): void;
 }) {
+  const [visible, setVisible] = useState(50);
   if (!result || !evidence)
     return (
       <Card border radius={3} padding={4}>
@@ -24,7 +26,8 @@ export function SeoPanel({
           <Heading size={1}>Review SEO before publishing</Heading>
           <Text size={1} muted style={{ lineHeight: 1.6 }}>
             Check mapped titles, descriptions, heading structure, image alt text, links, slugs and
-            duplicate values. This check uses rules and does not call an AI provider.
+            duplicate values, canonical overrides, indexing preferences, social images and focus
+            keywords. This check uses rules and does not call an AI provider.
           </Text>
           <Text size={1} muted>
             Fields that are not configured are shown as not checked.
@@ -83,7 +86,7 @@ export function SeoPanel({
                 {detail}
               </Text>
             ))}
-            {section.findings.map((finding) => (
+            {section.findings.slice(0, visible).map((finding) => (
               <Card key={finding.id} padding={3} radius={2} muted>
                 <Stack gap={3}>
                   <Flex align="center" gap={2} wrap="wrap">
@@ -127,14 +130,21 @@ export function SeoPanel({
                 </Stack>
               </Card>
             ))}
+            {section.findings.length > visible && (
+              <Button
+                text={`Show more findings (${section.findings.length - visible} remaining)`}
+                mode="ghost"
+                onClick={() => setVisible((count) => count + 50)}
+              />
+            )}
           </Stack>
         </Card>
       ))}
       <Box>
         <Text size={0} muted style={{ lineHeight: 1.6 }}>
-          CMS fields only. Canonical URLs, robots directives, HTTP status, rendered HTML and Google
-          indexing require a separate website audit. Other documents may change after this check;
-          run it again before relying on duplicate results.
+          CMS fields only. Published canonical tags, robots directives, HTTP status, rendered HTML
+          and Google indexing require a separate website audit. Other documents may change after
+          this check; run it again before relying on duplicate results.
         </Text>
       </Box>
     </Stack>

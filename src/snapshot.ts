@@ -1,4 +1,13 @@
 import { assertPath, publishedId, readPath } from "./paths.js";
+import {
+  isNonProse,
+  portableText,
+  record,
+  schemaAt,
+  validReference,
+  walkContent,
+  type StudioSchema,
+} from "./content-tree.js";
 import type {
   ContentSnapshot,
   DocumentMapping,
@@ -9,26 +18,11 @@ import type {
   SourceIssue,
 } from "./types.js";
 
-const LIMITS = {
-  documents: 20,
-  depth: 3,
-  sources: 100,
-  characters: 24_000,
-  bytes: 128_000,
-  referenceItems: 100,
-} as const;
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === "object" && !Array.isArray(value);
-
 export function validateMappings(mappings: Record<string, DocumentMapping>): void {
   if (!Object.keys(mappings).length) throw new Error("Configure at least one document type.");
   for (const [type, mapping] of Object.entries(mappings)) {
-    if (
-      !/^[A-Za-z][A-Za-z0-9_]*$/.test(type) ||
-      !mapping.fields.length ||
-      mapping.fields.length > 50
-    )
-      throw new Error("Each document type requires between 1 and 50 fields.");
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(type) || !mapping.fields.length)
+      throw new Error("Each document type requires at least one field.");
     const paths = new Set<string>();
     for (const field of mapping.fields) {
       assertPath(field.path);
@@ -37,21 +31,21 @@ export function validateMappings(mappings: Record<string, DocumentMapping>): voi
       paths.add(key);
       if (!["title", "description", "heading", "body"].includes(field.role))
         throw new Error("Invalid content role.");
-      if (field.format && !["text", "portableText"].includes(field.format))
+      if (field.format && !["text", "portableText", "content"].includes(field.format))
         throw new Error("Invalid content format.");
     }
-    if ((mapping.references?.length ?? 0) > 20)
-      throw new Error("Configure at most 20 reference fields per type.");
-    for (const reference of mapping.references ?? []) assertPath(reference);
+    for (const path of [...(mapping.references ?? []), ...(mapping.exclude ?? [])])
+      assertPath(path);
     if (mapping.locale) assertPath(mapping.locale);
   }
 }
 
+/** Fingerprints local complete evidence. Only transport requests have a byte bound. */
 export async function snapshotFingerprint(value: object): Promise<string> {
-  const bytes = new TextEncoder().encode(JSON.stringify(value));
-  if (bytes.byteLength > LIMITS.bytes)
-    throw new Error("Selected content exceeds the review payload limit. Reduce the mapped fields.");
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
   return [...new Uint8Array(hash)].map((part) => part.toString(16).padStart(2, "0")).join("");
 }
 
@@ -61,6 +55,7 @@ export async function collectSnapshot(input: {
   sanityProjectId: string;
   dataset: string;
   readDocuments: ReadDocuments;
+  schema?: StudioSchema;
   signal?: AbortSignal;
 }): Promise<ContentSnapshot> {
   validateMappings(input.mappings);
@@ -74,60 +69,76 @@ export async function collectSnapshot(input: {
   const perspective = root._id.startsWith("drafts.") ? "drafts" : "published";
   const mapping = input.mappings[root._type];
   if (!mapping) throw new Error("This document type has no content mapping.");
-  const sources: Source[] = [];
-  const issues: SourceIssue[] = [];
-  const documents: ContentSnapshot["documents"] = [];
-  const visited = new Set<string>();
-  const attempted = new Set<string>();
-  let characters = 0;
+  const sources: Source[] = [],
+    issues: SourceIssue[] = [],
+    documents: ContentSnapshot["documents"] = [];
+  const visited = new Set<string>(),
+    attempted = new Set<string>(),
+    issueKeys = new Set<string>(),
+    sourceKeys = new Set<string>();
+  const pending = [root];
   const issue = (
     doc: DocumentValue,
     path: FieldPath,
     code: SourceIssue["code"],
     message: string,
   ) => {
-    if (issues.length < 100)
+    const key = JSON.stringify([doc._id, path, code, message]);
+    if (!issueKeys.has(key)) {
+      issueKeys.add(key);
       issues.push({ code, message, documentId: doc._id, documentType: doc._type, path });
+    }
   };
   const add = (
     doc: DocumentValue,
-    field: DocumentMapping["fields"][number],
+    role: Source["role"],
     path: FieldPath,
     text: string,
     editable: boolean,
   ) => {
     if (!text.trim()) return;
-    if (sources.length >= LIMITS.sources || characters + text.length > LIMITS.characters) {
-      issue(doc, path, "limit", "Some content exceeds the review limit and was not included.");
+    if (
+      text.includes("\0") ||
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(text)
+    ) {
+      issue(
+        doc,
+        path,
+        "invalid-field",
+        "This field contains invalid Unicode characters. Correct the source text before checking.",
+      );
       return;
     }
-    characters += text.length;
+    const key = JSON.stringify([doc._id, path, text]);
+    if (sourceKeys.has(key)) return;
+    sourceKeys.add(key);
     sources.push({
       id: `source-${sources.length + 1}`,
       documentId: doc._id,
       documentType: doc._type,
       revision: doc._rev,
       path,
-      role: field.role,
+      role,
       text,
       editable: editable && doc._id === root._id && perspective === "drafts",
     });
   };
-  const visit = async (doc: DocumentValue, depth: number): Promise<void> => {
+  for (let cursor = 0; cursor < pending.length; cursor++) {
     signal.throwIfAborted();
+    const doc = pending[cursor]!;
     const id = publishedId(doc._id);
-    if (visited.has(id)) return;
+    if (visited.has(id)) continue;
     visited.add(id);
     if (!doc._rev || !doc._type)
       throw new Error("Sanity returned a document without revision metadata.");
-    documents.push({ id: doc._id, type: doc._type, revision: doc._rev });
     const selected = input.mappings[doc._type];
-    if (!selected) return;
+    if (!selected) continue;
+    documents.push({ id: doc._id, type: doc._type, revision: doc._rev });
+    const references: { value: unknown; path: FieldPath }[] = [];
     for (const field of selected.fields) {
       const value = readPath(doc, field.path);
       if (
-        value === undefined ||
-        value === null ||
+        value == null ||
         (typeof value === "string" && !value.trim()) ||
         (Array.isArray(value) && !value.length)
       ) {
@@ -135,114 +146,124 @@ export async function collectSnapshot(input: {
           issue(doc, field.path, "missing-field", `Add the mapped ${field.role} content.`);
         continue;
       }
-      if (field.format !== "portableText") {
+      if (!field.format || field.format === "text") {
         if (typeof value !== "string")
-          issue(doc, field.path, "invalid-field", "The mapped field must contain text.");
-        else add(doc, field, field.path, value, true);
-        continue;
-      }
-      if (!Array.isArray(value)) {
-        issue(doc, field.path, "invalid-field", "The mapped field must contain Portable Text.");
-        continue;
-      }
-      const keys = new Set<string>();
-      for (const block of value.slice(0, LIMITS.sources + 1)) {
-        if (
-          !isRecord(block) ||
-          block._type !== "block" ||
-          typeof block._key !== "string" ||
-          !/^[A-Za-z0-9_-]{1,128}$/.test(block._key) ||
-          keys.has(block._key) ||
-          !Array.isArray(block.children) ||
-          !block.children.every(
-            (child) => isRecord(child) && child._type === "span" && typeof child.text === "string",
-          )
-        ) {
           issue(
             doc,
             field.path,
             "invalid-field",
-            "A rich-text block could not be mapped. Custom blocks need an explicit mapping.",
+            "The mapped field must contain text. Use format: content for nested objects.",
           );
-          continue;
-        }
-        keys.add(block._key);
-        add(
-          doc,
-          { ...field, role: /^h[1-6]$/.test(String(block.style)) ? "heading" : field.role },
-          [...field.path, { _key: block._key }],
-          block.children.map((child) => child.text).join(""),
-          false,
-        );
+        else add(doc, field.role, field.path, value, true);
+        continue;
       }
-      if (value.length > LIMITS.sources + 1)
-        issue(doc, field.path, "limit", "Some rich-text blocks were not included.");
+      if (field.format === "portableText" && !Array.isArray(value)) {
+        issue(doc, field.path, "invalid-field", "The mapped field must contain Portable Text.");
+        continue;
+      }
+      const inspect = (value: unknown, path: FieldPath) =>
+        walkContent({
+          value,
+          path,
+          schema: schemaAt(input.schema?.get(doc._type), doc, path),
+          signal,
+          exclude: selected.exclude,
+          onIssue: (path, message) => issue(doc, path, "invalid-field", message),
+          onNode(node) {
+            if (isNonProse(node)) return false;
+            if (record(node.value) && node.value._ref) {
+              references.push({ value: node.value, path: node.path });
+              return false;
+            }
+            if (record(node.value) && node.value._type === "block") {
+              const block = portableText(node.value);
+              const role = /^h[1-6]$/.test(String(node.value.style)) ? "heading" : field.role;
+              const children = Array.isArray(node.value.children) ? node.value.children : [];
+              const hasCode = children.some(
+                (child) =>
+                  record(child) && Array.isArray(child.marks) && child.marks.includes("code"),
+              );
+              if (block.complete && !hasCode) add(doc, role, node.path, block.text, false);
+              else {
+                // Keep span runs separate around dynamic inline objects; never join unrelated words.
+                let run = "";
+                for (const child of children) {
+                  if (
+                    record(child) &&
+                    child._type === "span" &&
+                    typeof child.text === "string" &&
+                    !(Array.isArray(child.marks) && child.marks.includes("code"))
+                  )
+                    run += child.text;
+                  else {
+                    add(doc, role, node.path, run, false);
+                    run = "";
+                  }
+                }
+                add(doc, role, node.path, run, false);
+                if (!block.complete) {
+                  inspect(
+                    children.filter((child) => record(child) && child._type !== "span"),
+                    [...node.path, "children"],
+                  );
+                  issue(
+                    doc,
+                    node.path,
+                    "invalid-field",
+                    "This block includes dynamic inline content. Its stored text was checked separately; verify the rendered inline values and spacing.",
+                  );
+                }
+              }
+              return false;
+            }
+            if (typeof node.value === "string")
+              add(doc, field.role, node.path, node.value, !node.readonly);
+          },
+        });
+      inspect(value, field.path);
     }
     for (const path of selected.references ?? []) {
       const value = readPath(doc, path);
-      const refs =
-        value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
-      if (refs.length > LIMITS.referenceItems)
-        issue(doc, path, "limit", "Some references exceed the review limit.");
-      for (const ref of refs.slice(0, LIMITS.referenceItems)) {
-        signal.throwIfAborted();
-        if (
-          !isRecord(ref) ||
-          typeof ref._ref !== "string" ||
-          ref._projectId ||
-          ref._dataset ||
-          !/^[A-Za-z0-9_.-]{1,256}$/.test(ref._ref) ||
-          ref._ref.startsWith("versions.")
-        ) {
-          issue(
-            doc,
-            path,
-            "unsupported-reference",
-            "Only references within this project and dataset can be reviewed.",
-          );
-          continue;
-        }
-        const target = publishedId(ref._ref);
-        if (visited.has(target)) continue;
-        if (attempted.has(target)) continue;
-        if (attempted.size >= LIMITS.referenceItems) {
-          issue(doc, path, "limit", "The reference lookup limit was reached.");
-          continue;
-        }
-        if (depth >= LIMITS.depth || documents.length >= LIMITS.documents) {
-          issue(doc, path, "limit", "Some related documents exceed the review limit.");
-          continue;
-        }
-        attempted.add(target);
-        const ids = perspective === "drafts" ? [`drafts.${target}`, target] : [target];
-        const results = await input.readDocuments(ids, signal);
-        signal.throwIfAborted();
-        const related = ids
-          .map((expected) => results.find((item) => item?._id === expected))
-          .find(Boolean);
-        if (!related) {
-          issue(
-            doc,
-            path,
-            "unavailable-reference",
-            "A related document is unavailable or you do not have access.",
-          );
-          continue;
-        }
-        if (!input.mappings[related._type]) {
-          issue(
-            doc,
-            path,
-            "unsupported-reference",
-            "Configure the related document type to include its content.",
-          );
-          continue;
-        }
-        await visit(related, depth + 1);
-      }
+      for (const ref of value == null ? [] : Array.isArray(value) ? value : [value])
+        references.push({ value: ref, path });
     }
-  };
-  await visit(root, 0);
+    for (const { value: ref, path } of references) {
+      signal.throwIfAborted();
+      if (!validReference(ref)) {
+        issue(
+          doc,
+          path,
+          "unsupported-reference",
+          "Only references within this project and dataset can be reviewed.",
+        );
+        continue;
+      }
+      const target = publishedId(ref._ref);
+      if (visited.has(target) || attempted.has(target)) continue;
+      attempted.add(target);
+      const ids = perspective === "drafts" ? [`drafts.${target}`, target] : [target];
+      const results = await input.readDocuments(ids, signal);
+      signal.throwIfAborted();
+      const related = ids
+        .map((expected) => results.find((item) => item?._id === expected))
+        .find(Boolean);
+      if (!related)
+        issue(
+          doc,
+          path,
+          "unavailable-reference",
+          "A related document is unavailable or you do not have access.",
+        );
+      else if (!input.mappings[related._type])
+        issue(
+          doc,
+          path,
+          "unsupported-reference",
+          "Configure the related document type to include its content.",
+        );
+      else pending.push(related);
+    }
+  }
   const locale = mapping.locale ? readPath(root, mapping.locale) : null;
   const snapshot: Omit<ContentSnapshot, "fingerprint"> = {
     version: 1,

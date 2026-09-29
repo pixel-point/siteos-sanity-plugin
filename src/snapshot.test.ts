@@ -93,22 +93,22 @@ describe("Sanity source snapshots", () => {
     ]);
     expect(snapshot.sources).toEqual([]);
   });
-  it("bounds failed reference lookups and does not follow cross-dataset references", async () => {
+  it("reports failed reference lookups and does not follow cross-dataset references", async () => {
     const read = vi.fn(async (): Promise<DocumentValue[]> => []);
     const related = [
       { _ref: "external", _dataset: "secret" },
       ...Array.from({ length: 200 }, (_, i) => ({ _ref: `missing${i}` })),
     ];
     const snapshot = await collect(doc(undefined, { related }), read);
-    expect(read.mock.calls.length).toBeLessThanOrEqual(100);
+    expect(read.mock.calls.length).toBe(200);
     expect(read.mock.calls.flat(2)).not.toContain("external");
     expect(snapshot.issues.some((issue) => issue.code === "unsupported-reference")).toBe(true);
-    expect(snapshot.issues.some((issue) => issue.code === "limit")).toBe(true);
+    expect(snapshot.issues.some((issue) => issue.code === "limit")).toBe(false);
   });
-  it("reports content truncation without inventing partial text", async () => {
+  it("retains long fields for batched checks", async () => {
     const snapshot = await collect(doc(undefined, { title: "a".repeat(24_001) }));
-    expect(snapshot.sources).toEqual([]);
-    expect(snapshot.issues[0].code).toBe("limit");
+    expect(snapshot.sources[0].text).toHaveLength(24_001);
+    expect(snapshot.issues).toEqual([]);
   });
   it("does not mask cancelled or failed Sanity reads", async () => {
     const controller = new AbortController();

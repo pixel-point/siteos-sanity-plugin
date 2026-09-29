@@ -3,7 +3,11 @@ import { validateSeoResult } from "./seo-result.js";
 import type { SeoCheckResult, SeoEvidence } from "./seo-types.js";
 
 it("rejects stale responses, omitted coverage and navigation to unknown related documents", () => {
-  const evidence = { fingerprint: "snapshot", duplicates: [] } as unknown as SeoEvidence;
+  const evidence = {
+    version: 1,
+    fingerprint: "snapshot",
+    duplicates: [],
+  } as unknown as SeoEvidence;
   const result: SeoCheckResult = {
     version: 1,
     fingerprint: "snapshot",

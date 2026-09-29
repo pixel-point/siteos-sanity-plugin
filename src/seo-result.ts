@@ -5,15 +5,23 @@ export function validateSeoResult(result: SeoCheckResult, evidence: SeoEvidence)
   const fail = () => {
     throw new Error("The SEO check returned an invalid or outdated result.");
   };
-  const sections = ["metadata", "headings", "images", "links", "slug", "duplicates"];
+  const sections = [
+    "metadata",
+    "headings",
+    "images",
+    "links",
+    "slug",
+    "duplicates",
+    ...(evidence.version === 2 ? ["canonical", "indexing", "social", "keyword"] : []),
+  ];
   if (
     !result ||
-    result.version !== 1 ||
+    result.version !== evidence.version ||
     result.fingerprint !== evidence.fingerprint ||
     typeof result.rulesVersion !== "string" ||
     result.rulesVersion.length > 100 ||
     !Array.isArray(result.sections) ||
-    result.sections.length !== 6
+    result.sections.length !== sections.length
   )
     return fail();
   const seen = new Set<string>();
@@ -26,10 +34,8 @@ export function validateSeoResult(result: SeoCheckResult, evidence: SeoEvidence)
       !validText(section.title) ||
       !["passed", "attention", "partial", "not-configured"].includes(section.status) ||
       !Array.isArray(section.details) ||
-      section.details.length > 50 ||
       section.details.some((s) => !validText(s)) ||
-      !Array.isArray(section.findings) ||
-      section.findings.length > 250
+      !Array.isArray(section.findings)
     )
       return fail();
     seen.add(section.id);

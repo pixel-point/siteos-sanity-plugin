@@ -24,7 +24,20 @@ const signal = () => new AbortController().signal;
 afterEach(() => vi.useRealTimers());
 describe("shared Studio connection transport", () => {
   it("sends an explicit SEO check to its own endpoint without launching or polling an AI job", async () => {
-    const fetcher = vi.fn(async () => Response.json({ version: 1, sections: [] }));
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        version: 1,
+        fingerprint: "evidence",
+        rulesVersion: "cms-seo-v1",
+        sections: ["metadata", "headings", "images", "links", "slug", "duplicates"].map((id) => ({
+          id,
+          title: id,
+          status: "not-configured",
+          details: [],
+          findings: [],
+        })),
+      }),
+    );
     let current = value;
     const adapter = createHostedConnection({
       siteosUrl: value.siteosOrigin,

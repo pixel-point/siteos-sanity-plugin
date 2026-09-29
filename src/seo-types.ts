@@ -10,13 +10,34 @@ export type SeoMapping = {
   portableText?: readonly FieldPath[];
   images?: readonly { path: FieldPath; alt?: FieldPath; decorative?: FieldPath }[];
   links?: readonly { path: FieldPath; href?: FieldPath; text?: FieldPath; reference?: FieldPath }[];
+  /** Structured content roots; defaults to mapped portableText/content fields. */
+  content?: readonly FieldPath[];
+  canonicalUrl?: FieldPath;
+  noIndex?: FieldPath;
+  socialImage?: FieldPath;
+  focusKeyword?: FieldPath;
+  /** Website defaults are explicit configuration, never inferred. */
+  titleFallback?: string | { path: FieldPath };
+  descriptionFallback?: string | { path: FieldPath };
+  /** Heading semantics for custom blocks are chosen by the website renderer. */
+  customTypes?: Record<string, { headings?: readonly { path: FieldPath; level: number }[] }>;
   /** Exact-value comparison within the same document type and mapped locale. Defaults to true. */
   duplicates?: boolean;
 };
-export type SeoSectionId = "metadata" | "headings" | "images" | "links" | "slug" | "duplicates";
-export type SeoTextField = { path: FieldPath; value: string | null };
+export type SeoSectionId =
+  | "metadata"
+  | "headings"
+  | "images"
+  | "links"
+  | "slug"
+  | "duplicates"
+  | "canonical"
+  | "indexing"
+  | "social"
+  | "keyword";
+export type SeoTextField = { path: FieldPath; value: string | null; fallback?: boolean };
 export type SeoEvidence = {
-  version: 1;
+  version: 1 | 2;
   sanityProjectId: string;
   dataset: string;
   documentId: string;
@@ -27,6 +48,15 @@ export type SeoEvidence = {
     title: SeoTextField | null;
     description: SeoTextField | null;
     slug: SeoTextField | null;
+    canonicalUrl?: SeoTextField | null;
+    focusKeyword?: SeoTextField | null;
+    noIndex?: { path: FieldPath; value: boolean | null } | null;
+    socialImage?: {
+      path: FieldPath;
+      hasAsset: boolean;
+      width: number | null;
+      height: number | null;
+    } | null;
   };
   primaryHeadingMapped: boolean;
   headings: { path: FieldPath; level: number; text: string }[] | null;
@@ -48,6 +78,13 @@ export type SeoEvidence = {
       }[]
     | null;
   limitations: { section: SeoSectionId; message: string }[];
+  batch?: {
+    index: number;
+    total: number;
+    previousHeadingLevel: number;
+    primaryHeadingsBefore: number;
+    counts: { headings: number; images: number; links: number; duplicates: number };
+  };
   fingerprint: string;
 };
 export type SeoFinding = {
@@ -59,7 +96,7 @@ export type SeoFinding = {
   relatedDocument?: { id: string; type: string };
 };
 export type SeoCheckResult = {
-  version: 1;
+  version: 1 | 2;
   rulesVersion: string;
   fingerprint: string;
   sections: {

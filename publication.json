@@ -38,6 +38,10 @@
     "src/corrections.test.ts",
     "src/connection.ts",
     "src/use-connection.ts",
-    "src/connection.test.ts"
+    "src/connection.test.ts",
+    "src/content-tree.ts",
+    "src/text-batches.ts",
+    "src/seo-batches.ts",
+    "src/large-content.test.ts"
   ]
 }
