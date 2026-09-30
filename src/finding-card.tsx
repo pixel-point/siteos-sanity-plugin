@@ -48,6 +48,7 @@ function HighlightedText({ parts, suggested = false }: { parts: TextPart[]; sugg
 export function FindingCard({
   finding,
   source,
+  label,
   related,
   disabled,
   onOpen,
@@ -55,6 +56,7 @@ export function FindingCard({
 }: {
   finding: Finding;
   source: Source;
+  label?: string;
   related: boolean;
   disabled: boolean;
   onOpen(): void;
@@ -78,7 +80,7 @@ export function FindingCard({
             {kinds[finding.kind]}
           </Badge>
           <Text size={1} weight="semibold">
-            {sourceLabel(source)}
+            {label ?? sourceLabel(source)}
           </Text>
           {related && <Badge fontSize={0}>Related document</Badge>}
         </Flex>

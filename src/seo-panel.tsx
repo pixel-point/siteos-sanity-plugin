@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge, Box, Button, Card, Flex, Heading, Stack, Text } from "@sanity/ui";
-import type { SeoCheckResult, SeoEvidence } from "./seo-types.js";
+import type { SeoCheckResult, SeoEvidence, SeoNotApplicable } from "./seo-types.js";
+import { seoReportSections } from "./seo-report.js";
 import type { FieldPath } from "./types.js";
 
 const labels = {
@@ -8,14 +9,18 @@ const labels = {
   attention: "Review",
   partial: "Partially checked",
   "not-configured": "Not configured",
+  "not-applicable": "Not applicable",
+  "no-values": "No values to compare",
 } as const;
 export function SeoPanel({
   result,
   evidence,
+  notApplicable,
   onNavigate,
 }: {
   result: SeoCheckResult | null;
   evidence: SeoEvidence | null;
+  notApplicable?: SeoNotApplicable;
   onNavigate(documentId: string, documentType: string, path: FieldPath): void;
 }) {
   const [visible, setVisible] = useState(50);
@@ -30,13 +35,17 @@ export function SeoPanel({
             keywords. This check uses rules and does not call an AI provider.
           </Text>
           <Text size={1} muted>
-            Fields that are not configured are shown as not checked.
+            Unmapped sections are shown as not configured. Sections explicitly excluded for this
+            document type are hidden.
           </Text>
         </Stack>
       </Card>
     );
-  const findings = result.sections.flatMap((s) => s.findings);
-  const incomplete = result.sections.filter(
+  const sections = seoReportSections(result, evidence, notApplicable).filter(
+    (section) => section.status !== "not-applicable",
+  );
+  const findings = sections.flatMap((s) => s.findings);
+  const incomplete = sections.filter(
     (s) => s.status === "partial" || s.status === "not-configured",
   ).length;
   return (
@@ -48,13 +57,15 @@ export function SeoPanel({
         <Text size={1}>
           {findings.length
             ? `Items to review: ${findings.length}`
-            : "No issues found in checked fields"}
+            : sections.some((s) => s.status === "passed" || s.status === "partial")
+              ? "No issues found in checked fields"
+              : "No applicable checks completed"}
         </Text>
         {!!incomplete && (
           <Badge tone="caution">Sections needing configuration or review: {incomplete}</Badge>
         )}
       </Flex>
-      {result.sections.map((section) => (
+      {sections.map((section) => (
         <Card key={section.id} border radius={3} padding={4}>
           <Stack gap={4}>
             <Flex align="center" gap={3} justify="space-between" wrap="wrap">
@@ -63,9 +74,9 @@ export function SeoPanel({
                 tone={
                   section.status === "passed"
                     ? "positive"
-                    : section.status === "not-configured"
-                      ? "default"
-                      : "caution"
+                    : section.status === "attention" || section.status === "partial"
+                      ? "caution"
+                      : "default"
                 }
               >
                 {labels[section.status]}

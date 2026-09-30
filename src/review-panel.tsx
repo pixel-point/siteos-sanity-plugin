@@ -13,24 +13,36 @@ import {
   TabPanel,
 } from "@sanity/ui";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useClient, useDataset, useProjectId, useDocumentSyncState, useSchema } from "sanity";
+import {
+  useClient,
+  useCurrentUser,
+  useDataset,
+  useProjectId,
+  useDocumentSyncState,
+  useSchema,
+} from "sanity";
 import { useRouter } from "sanity/router";
-import { FindingCard, sourceLabel } from "./finding-card.js";
+import { FindingCard } from "./finding-card.js";
+import { fieldLabel } from "./field-label.js";
+import { TextCoverage } from "./text-coverage.js";
+import { textReviewCoverage } from "./text-review.js";
 import { prepareCorrection, validateCheckResult } from "./corrections.js";
 import { formatPath, publishedId } from "./paths.js";
-import { collectSnapshot } from "./snapshot.js";
+import { collectSnapshot, snapshotFingerprint } from "./snapshot.js";
 import { collectSeoEvidence } from "./seo-snapshot.js";
 import { validateSeoResult } from "./seo-result.js";
 import { SeoPanel } from "./seo-panel.js";
-import type { SeoEvidence, SeoCheckResult } from "./seo-types.js";
+import { seoNotApplicable } from "./seo-report.js";
 import { useSiteosConnection } from "./use-connection.js";
+import { siteosOrigin } from "./connection.js";
+import { reviewSessionCache, reviewSessionKey } from "./review-session.js";
+import { useDocumentStamp, useReviewFreshness, useReviewSession } from "./use-review-session.js";
 import type {
-  CheckResult,
   Connection,
-  ContentSnapshot,
   DocumentValue,
   Finding,
   SiteosPluginOptions,
+  SourceIssue,
 } from "./types.js";
 
 const message = (error: unknown) =>
@@ -55,19 +67,39 @@ export function ReviewPanel({
   });
   const sanityProjectId = useProjectId();
   const dataset = useDataset();
+  const user = useCurrentUser();
   const router = useRouter();
   const syncState = useDocumentSyncState(publishedId(document?._id ?? ""), document?._type ?? "");
   const latestSync = useRef(syncState);
   latestSync.current = syncState;
   const tabsId = useId();
-  const [section, setSection] = useState<"text" | "seo">("seo");
-  const [seoEvidence, setSeoEvidence] = useState<SeoEvidence | null>(null);
-  const [seoResult, setSeoResult] = useState<SeoCheckResult | null>(null);
-  const seoReviewedDocument = useRef<string | null>(null);
-  const seoStale = !!seoEvidence && JSON.stringify(document) !== seoReviewedDocument.current;
-  const [snapshot, setSnapshot] = useState<ContentSnapshot | null>(null);
-  const [result, setResult] = useState<CheckResult | null>(null);
   const [connection, setConnection] = useState<Connection | null>(() => adapter?.current() ?? null);
+  const scope =
+    document && user
+      ? reviewSessionKey({
+          sanityProjectId,
+          dataset,
+          userId: user.id,
+          documentId: document._id,
+          documentType: document._type,
+          siteosOrigin: siteosOrigin(options.siteosUrl),
+          connection: connection ?? {
+            organizationId: "",
+            projectId: "",
+            environmentId: "",
+            projectName: "",
+            environmentName: "",
+          },
+        })
+      : null;
+  const session = useReviewSession(scope);
+  const { section, text: textReview, seo: seoReview } = session.review;
+  const snapshot = textReview?.input ?? null;
+  const result = textReview?.result ?? null;
+  const seoEvidence = seoReview?.input ?? null;
+  const seoResult = seoReview?.result ?? null;
+  const setSection = (section: "seo" | "text") =>
+    reviewSessionCache.update(scope, (review) => ({ ...review, section }));
   const [busy, setBusy] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [visibleSources, setVisibleSources] = useState(50);
@@ -76,19 +108,37 @@ export function ReviewPanel({
     () => new Map(snapshot?.sources.map((source) => [source.id, source]) ?? []),
     [snapshot],
   );
-  const issueGroups = useMemo(() => {
-    const groups = new Map<string, NonNullable<typeof snapshot>["issues"]>();
-    for (const issue of snapshot?.issues ?? [])
-      groups.set(issue.message, [...(groups.get(issue.message) ?? []), issue]);
-    return [...groups.entries()];
-  }, [snapshot]);
+  const sourceLabel = (source: Pick<SourceIssue, "documentId" | "documentType" | "path">) =>
+    fieldLabel(
+      schema.get(source.documentType),
+      source.documentId === document?._id ? document : undefined,
+      source.path,
+    );
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const operation = useRef<AbortController | null>(null);
   const latest = useRef(document);
   latest.current = document;
-  const reviewedDocument = useRef<string | null>(null);
-  const stale = !!snapshot && JSON.stringify(document) !== reviewedDocument.current;
+  const serialized = JSON.stringify({ document, mappings: options.documentTypes });
+  const latestSerialized = useRef(serialized);
+  latestSerialized.current = serialized;
+  const documentStamp = useDocumentStamp(serialized);
+  const textFreshness = useReviewFreshness(
+    scope,
+    textReview,
+    documentStamp,
+    async (signal) => (await collect(signal)).fingerprint,
+  );
+  const seoFreshness = useReviewFreshness(
+    scope,
+    seoReview,
+    documentStamp,
+    async (signal) => (await collectSeo(signal, true)).fingerprint,
+  );
+  const stale = textFreshness === "stale";
+  const seoStale = seoFreshness === "stale";
+  const freshness = section === "seo" ? seoFreshness : textFreshness;
+  const checkedAt = (section === "seo" ? seoReview : textReview)?.checkedAt;
 
   useEffect(() => {
     if (!adapter?.load) return;
@@ -115,7 +165,7 @@ export function ReviewPanel({
     () => () => {
       operation.current?.abort();
     },
-    [adapter],
+    [adapter, scope],
   );
 
   async function collect(signal: AbortSignal) {
@@ -132,6 +182,30 @@ export function ReviewPanel({
         client.fetch<DocumentValue[]>("*[_id in $ids]", { ids }, { signal: readSignal }),
     });
   }
+  async function collectSeo(signal: AbortSignal, requireAvailableReads = false) {
+    const current = latest.current;
+    if (!current) throw new Error("Save a document before reviewing its content.");
+    let unavailable = false;
+    const evidence = await collectSeoEvidence({
+      document: current,
+      mapping: options.documentTypes[current._type],
+      schema,
+      sanityProjectId,
+      dataset,
+      signal,
+      query: (query, params, querySignal, perspective) =>
+        client
+          .withConfig({ useCdn: false, perspective })
+          .fetch(query, params, { signal: querySignal })
+          .catch((error: unknown) => {
+            unavailable = true;
+            throw error;
+          }),
+    });
+    if (requireAvailableReads && unavailable)
+      throw new Error("Current SEO evidence is unavailable.");
+    return evidence;
+  }
   async function run(label: string, action: (signal: AbortSignal) => Promise<void>) {
     operation.current?.abort();
     const controller = new AbortController();
@@ -144,7 +218,10 @@ export function ReviewPanel({
     } catch (cause) {
       if (!controller.signal.aborted) setError(message(cause));
     } finally {
-      if (!controller.signal.aborted) setBusy(null);
+      if (operation.current === controller) {
+        operation.current = null;
+        setBusy(null);
+      }
     }
   }
   const navigate = (
@@ -164,29 +241,34 @@ export function ReviewPanel({
   };
   const prepare = () =>
     run("Preparing content", async (signal) => {
-      const before = JSON.stringify(latest.current);
+      const before = latestSerialized.current;
       const next = await collect(signal);
+      const stamp = await snapshotFingerprint({ serialized: before });
       signal.throwIfAborted();
-      if (before !== JSON.stringify(latest.current))
+      if (before !== latestSerialized.current)
         throw new Error("The document changed while preparing. Try again.");
-      reviewedDocument.current = before;
-      setSnapshot(next);
-      setResult(null);
+      reviewSessionCache.update(scope, (review) => ({
+        ...review,
+        text: {
+          input: next,
+          result: null,
+          documentStamp: stamp,
+          checkedAt: null,
+        },
+      }));
       setPreviewOpen(true);
     });
   const check = () =>
     run("Checking content", async (signal) => {
       if (!connection || !adapter) return;
-      const before = JSON.stringify(latest.current);
+      const before = latestSerialized.current;
       const fresh = await collect(signal);
+      const stamp = await snapshotFingerprint({ serialized: before });
       signal.throwIfAborted();
-      if (before !== JSON.stringify(latest.current))
+      if (before !== latestSerialized.current)
         throw new Error("The document changed while preparing. Try again.");
-      reviewedDocument.current = before;
-      setSnapshot(fresh);
       setVisibleSources(50);
       setVisibleFindings(50);
-      setResult(null);
       const checked = validateCheckResult(
         await adapter.check({
           connection,
@@ -195,43 +277,56 @@ export function ReviewPanel({
           onProgress: ({ completed, total, result }) => {
             if (signal.aborted) return;
             setBusy(`Checking content: ${completed} of ${total} parts complete`);
-            setResult(result);
+            reviewSessionCache.update(scope, (review) => ({
+              ...review,
+              text: {
+                input: fresh,
+                result: validateCheckResult(result, fresh),
+                documentStamp: stamp,
+                checkedAt: new Date().toISOString(),
+              },
+            }));
           },
         }),
         fresh,
       );
       signal.throwIfAborted();
-      setResult(checked);
+      reviewSessionCache.update(scope, (review) => ({
+        ...review,
+        text: {
+          input: fresh,
+          result: checked,
+          documentStamp: stamp,
+          checkedAt: new Date().toISOString(),
+        },
+      }));
     });
   const checkSeo = () =>
     run("Checking SEO", async (signal) => {
       if (!connection || !adapter?.checkSeo || !latest.current)
         throw new Error("SEO checks are not available in this connection adapter.");
-      const before = JSON.stringify(latest.current);
-      const evidence = await collectSeoEvidence({
-        document: latest.current,
-        mapping: options.documentTypes[latest.current._type],
-        schema,
-        sanityProjectId,
-        dataset,
-        signal,
-        query: (query, params, querySignal, perspective) =>
-          client
-            .withConfig({ useCdn: false, perspective })
-            .fetch(query, params, { signal: querySignal }),
-      });
+      const before = latestSerialized.current;
+      const notApplicable = seoNotApplicable(options.documentTypes[latest.current._type]?.seo);
+      const evidence = await collectSeo(signal);
+      const stamp = await snapshotFingerprint({ serialized: before });
       signal.throwIfAborted();
-      if (before !== JSON.stringify(latest.current))
+      if (before !== latestSerialized.current)
         throw new Error("The document changed while preparing SEO evidence. Try again.");
-      seoReviewedDocument.current = before;
-      setSeoEvidence(evidence);
-      setSeoResult(null);
       const checked = validateSeoResult(
         await adapter.checkSeo({ connection, evidence, signal }),
         evidence,
       );
       signal.throwIfAborted();
-      setSeoResult(checked);
+      reviewSessionCache.update(scope, (review) => ({
+        ...review,
+        seo: {
+          input: evidence,
+          notApplicable,
+          result: checked,
+          documentStamp: stamp,
+          checkedAt: new Date().toISOString(),
+        },
+      }));
     });
   const apply = (finding: Finding) =>
     run("Applying correction", async (signal) => {
@@ -254,8 +349,11 @@ export function ReviewPanel({
       prepareCorrection({ snapshot, result, finding, current: latest.current });
       await client.patch(patch.documentId).ifRevisionId(patch.revision).set(patch.set).commit();
       signal.throwIfAborted();
-      setSnapshot(null);
-      setResult(null);
+      reviewSessionCache.update(scope, (review) => ({
+        ...review,
+        text: review.text && { ...review.text, invalidated: true },
+        seo: review.seo && { ...review.seo, invalidated: true },
+      }));
       setNotice("Correction applied to this draft. Check again to review the updated content.");
     });
 
@@ -275,7 +373,13 @@ export function ReviewPanel({
             {adapter && (
               <Button
                 text={
-                  section === "seo" ? "Check SEO" : result || stale ? "Check again" : "Check text"
+                  section === "seo"
+                    ? seoResult
+                      ? "Check SEO again"
+                      : "Check SEO"
+                    : result || stale
+                      ? "Check again"
+                      : "Check text"
                 }
                 tone="primary"
                 disabled={
@@ -313,9 +417,8 @@ export function ReviewPanel({
                   disabled={!!busy}
                   onClick={() => {
                     adapter?.disconnect();
+                    reviewSessionCache.remove(scope);
                     setConnection(null);
-                    setResult(null);
-                    setSeoResult(null);
                   }}
                 />
               )}
@@ -405,19 +508,49 @@ export function ReviewPanel({
             <Text size={1}>{notice}</Text>
           </Card>
         )}
-        {(section === "text" ? stale : seoStale) && (
+        {checkedAt && (
+          <Text size={1} muted>
+            Last checked: <time dateTime={checkedAt}>{new Date(checkedAt).toLocaleString()}</time>
+          </Text>
+        )}
+        {freshness === "checking" && (
+          <Text size={1} muted>
+            Checking for content changes…
+          </Text>
+        )}
+        {freshness === "unknown" && (
           <Card tone="caution" padding={4} radius={2} role="status">
             <Text size={1}>
-              This document changed. Run a new check to review its current content.
+              The previous result is shown. Current content could not be verified; run a new check
+              before using corrections.
             </Text>
           </Card>
+        )}
+        {((stale && section === "text") || (seoStale && section === "seo")) && (
+          <Card tone="caution" padding={4} radius={2} role="status">
+            <Text size={1}>
+              Content changed since this check. The previous result is shown below. Run a new check
+              to review the current document and related content.
+            </Text>
+          </Card>
+        )}
+        {!session.persisted && (result || seoResult) && (
+          <Text size={1} muted>
+            This browser could not save the result for a page reload. It remains available while
+            Studio stays open.
+          </Text>
         )}
         <TabPanel
           id={`${tabsId}-seo-panel`}
           aria-labelledby={`${tabsId}-seo`}
           hidden={section !== "seo"}
         >
-          <SeoPanel result={seoResult} evidence={seoEvidence} onNavigate={navigate} />
+          <SeoPanel
+            result={seoResult}
+            evidence={seoEvidence}
+            notApplicable={seoReview?.notApplicable}
+            onNavigate={navigate}
+          />
         </TabPanel>
         <TabPanel
           id={`${tabsId}-text-panel`}
@@ -454,39 +587,19 @@ export function ReviewPanel({
                     {snapshot.documents.length === 1 ? "document" : "documents"}
                   </Text>
                 </Flex>
-                {issueGroups.map(([message, issues]) => (
-                  <Card key={message} padding={4} radius={2} tone="caution">
-                    <Stack gap={3}>
-                      <Text size={1}>
-                        {message} {issues.length > 1 ? `(${issues.length} fields)` : ""}
-                      </Text>
-                      <details>
-                        <summary>Show affected fields</summary>
-                        <Stack gap={2} paddingTop={3}>
-                          {issues.map((issue, index) => (
-                            <Button
-                              key={index}
-                              mode="ghost"
-                              text={`Open ${formatPath(issue.path)}`}
-                              onClick={() =>
-                                navigate(issue.documentId, issue.documentType, issue.path)
-                              }
-                            />
-                          ))}
-                        </Stack>
-                      </details>
-                    </Stack>
-                  </Card>
-                ))}
+                <TextCoverage
+                  snapshot={snapshot}
+                  result={result}
+                  label={sourceLabel}
+                  onOpen={(issue) => navigate(issue.documentId, issue.documentType, issue.path)}
+                />
                 {result && (
                   <Stack gap={4}>
                     <Flex gap={3} align="center">
                       <Heading size={1}>
-                        {result.coverage && result.coverage.completed < result.coverage.total
-                          ? `Partial results: ${result.coverage.completed} of ${result.coverage.total} parts`
-                          : result.findings.length
-                            ? "Suggested corrections"
-                            : "No confirmed corrections"}
+                        {result.findings.length
+                          ? "Suggested corrections"
+                          : textReviewCoverage(snapshot, result).emptyMessage}
                       </Heading>
                       {!!result.findings.length && (
                         <Badge tone="caution">{result.findings.length}</Badge>
@@ -499,8 +612,9 @@ export function ReviewPanel({
                           key={finding.id}
                           finding={finding}
                           source={source}
+                          label={sourceLabel(source)}
                           related={source.documentId !== snapshot.documentId}
-                          disabled={!!busy || stale || syncState !== "synced"}
+                          disabled={!!busy || textFreshness !== "current" || syncState !== "synced"}
                           onOpen={() =>
                             navigate(source.documentId, source.documentType, source.path)
                           }
@@ -515,11 +629,6 @@ export function ReviewPanel({
                         onClick={() => setVisibleFindings((count) => count + 50)}
                       />
                     )}
-                    {result.limitations.map((limit, index) => (
-                      <Text key={index} size={1} muted style={{ lineHeight: 1.6 }}>
-                        {limit}
-                      </Text>
-                    ))}
                   </Stack>
                 )}
                 <Card border radius={3}>
@@ -590,7 +699,7 @@ export function ReviewPanel({
                             onClick={() => setVisibleSources((count) => count + 50)}
                           />
                         )}
-                        {(section === "text" ? stale : seoStale) && (
+                        {stale && !result && (
                           <Flex>
                             <Button
                               text="Refresh preview"

@@ -23,6 +23,8 @@ export type SeoMapping = {
   customTypes?: Record<string, { headings?: readonly { path: FieldPath; level: number }[] }>;
   /** Exact-value comparison within the same document type and mapped locale. Defaults to true. */
   duplicates?: boolean;
+  /** Sections outside this document type's audit scope, with a reader-facing reason. */
+  notApplicable?: SeoNotApplicable;
 };
 export type SeoSectionId =
   | "metadata"
@@ -35,6 +37,7 @@ export type SeoSectionId =
   | "indexing"
   | "social"
   | "keyword";
+export type SeoNotApplicable = Partial<Record<SeoSectionId, string>>;
 export type SeoTextField = { path: FieldPath; value: string | null; fallback?: boolean };
 export type SeoEvidence = {
   version: 1 | 2;

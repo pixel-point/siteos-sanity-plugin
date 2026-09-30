@@ -6,7 +6,7 @@ Check SEO fields and review writing before publishing, directly in Sanity Studio
 a **🔍 SEO/GEO Audit** document tab with **SEO** first and **Text** second. An administrator connects
 the Studio to a SiteOS Project once; authorized Sanity editors use that shared connection.
 
-**Version 0.2.0.** Supported Studio versions and setup are listed below. Shared connection
+**Version 0.2.1.** Supported Studio versions and setup are listed below. Shared connection
 persistence has been tested against a real Sanity dataset. Access from a second actual Sanity
 editor account and custom Sanity roles has not yet been verified; confirm the secret-document
 permissions described below before a team rollout.
@@ -43,7 +43,7 @@ not add the document tab: configure the existing Structure tool next.
 For local development, install a reviewed packed artifact instead:
 
 ```sh
-pnpm add /absolute/path/to/siteoshq-sanity-0.2.0.tgz
+pnpm add /absolute/path/to/siteoshq-sanity-0.2.1.tgz
 ```
 
 ## 2. Configure your existing document types
@@ -128,6 +128,19 @@ original and suggested words. **Content included in this check** is a collapsibl
 **Apply correction** writes only the selected, still-current plain-text draft field; Portable Text
 and related-document suggestions open their source for manual editing. Publishing remains unchanged.
 
+The last SEO and Text results stay available when switching to Editor and back, including their
+check time and the selected audit tab. They are saved for the current browser-tab session and
+survive a reload when session storage is available. Results are isolated by Sanity user,
+project/dataset, document and SiteOS installation; they are not shared check history for other editors.
+Only selected evidence and results are cached, never connection credentials.
+
+Returning to the audit or focusing the browser re-reads Sanity evidence without running SEO rules
+or AI. Changes to the document, mappings or related evidence mark the previous result as outdated.
+The report stays visible, and corrections remain disabled until freshness is confirmed or a new
+check succeeds. A failed recheck keeps the previous result; completed parts of an interrupted Text
+check remain available. If browser storage is unavailable or full, results still survive navigation
+while Studio stays open and a message explains that reload persistence is unavailable.
+
 ## SEO mapping and coverage
 
 Map only fields that your website actually uses. The `seo` configuration is optional; title and
@@ -210,6 +223,38 @@ before npm release; self-hosted installations must upgrade the backend first. Ex
 remain supported by the backend. Install the new package, update mappings for the additional fields,
 and rebuild Studio; reconnecting is not needed when the origin/dataset stays the same.
 
+### Checks that do not apply to a document type
+
+Since 0.2.1, use `seo.notApplicable` to declare a section outside the audit scope,
+with a short explanation in the configuration. For example, a listing with a fixed URL has no slug to audit:
+
+```ts
+seo: {
+  title: ["seo", "title"],
+  description: ["seo", "description"],
+  primaryHeading: ["heroTitle"],
+  content: [["highlights"]],
+  notApplicable: {slug: "This page uses the fixed /events route."},
+}
+```
+
+The report hides that section and excludes it from findings and configuration warnings. Its reason
+stays in the configuration and saved audit scope. This is an explicit scope declaration, not an automatic
+inference from an empty field. Omitted mappings still show **Not configured**. Do not exclude
+images or links merely because their content has not been mapped; select their content roots or
+add explicit mappings first. Valid section IDs are `metadata`, `headings`, `images`, `links`, `slug`,
+`duplicates`, `canonical`, `indexing`, `social`, and `keyword`.
+
+Scope is saved with the audit, so changing configuration marks the saved check as stale rather
+than silently relabeling its results. It changes the report, not Text collection or the evidence
+needed by other SEO sections. Excluding `duplicates` also skips its Sanity reads; the existing
+`duplicates: false` option also hides that section. The v2 API is unchanged.
+
+If duplicate comparison has no non-empty source values (including when only website defaults
+are used), it shows neutral **No values to compare**, without a configuration warning. Read failures,
+invalid values and incomplete evidence continue to show **Partially checked**; a neutral state is
+not a uniqueness claim.
+
 ## Connection and permissions
 
 Only public settings and field mapping go into `sanity.config.ts`. `siteosUrl` optionally selects
@@ -272,6 +317,14 @@ discover; it is not required to install a published package.
 - Related document types must also be mapped. Draft reviews prefer referenced drafts; published
   reviews only read published references. Cross-dataset references and release versions are not
   supported.
+- **Review coverage** separates missing content and incomplete processing from text findings.
+  An empty corrections list applies only to checked text; it does not establish complete page
+  coverage. Unmapped reference warnings identify the related document type. Field links use the
+  Studio schema's titles and block positions, while navigation preserves the stable keyed paths.
+  Add a minimal mapping such as `pageSubcategory: {fields: [{path: ["title"], role: "heading"}]}`
+  to include that related title. Queries used by the website to populate a chapter index, cards or
+  other dynamic lists do not automatically become plugin inputs. Select those sources explicitly
+  or use a separate website audit for the rendered content.
 - Complete selected content and configured related documents are collected without a total section,
   character, reference-count or reference-depth cap. Cycles are deduplicated. Each Text request
   holds at most 100 source parts, 20 documents and 24,000 characters within 128 KB; this is a batch
@@ -293,7 +346,8 @@ discover; it is not required to install a published package.
 The canonical source lives in `siteos-platform/packages/sanity-plugin`. The downstream repository
 is [pixel-point/siteos-sanity-plugin](https://github.com/pixel-point/siteos-sanity-plugin).
 Maintainers generate a reviewed projection containing only allowlisted files and `release.json`
-provenance. Preview projections and this private alpha package cannot be publicly released.
+provenance. Preview projections cannot be publicly released; releases require a verified canonical
+source commit and a new package version.
 
 The MIT license covers this plugin source. SiteOS backend services are distributed separately.
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution workflow.

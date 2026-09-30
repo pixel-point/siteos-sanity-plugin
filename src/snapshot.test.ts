@@ -132,4 +132,33 @@ describe("Sanity source snapshots", () => {
       ),
     ).rejects.toThrow("offline");
   });
+  it("identifies an unmapped related type and includes only its configured fields when mapped", async () => {
+    const document = doc("page", { related: { _ref: "handbook" } });
+    const read = vi.fn(async () => [
+      {
+        _id: "handbook",
+        _type: "pageSubcategory",
+        _rev: "h1",
+        title: "A handbook",
+        internalNotes: "Do not include",
+        category: { _ref: "parent" },
+      },
+    ]);
+    const before = await collect(document, read);
+    expect(before.issues[0]).toMatchObject({ code: "unsupported-reference", path: ["related"] });
+    expect(before.issues[0].message).toContain('"pageSubcategory"');
+    read.mockClear();
+    const after = await collectSnapshot({
+      document,
+      readDocuments: read,
+      sanityProjectId: "project",
+      dataset: "production",
+      mappings: { ...mapping, pageSubcategory: { fields: [{ path: ["title"], role: "heading" }] } },
+    });
+    expect(after.issues).toEqual([]);
+    expect(after.sources.map((source) => source.text)).toEqual(["A title", "A handbook"]);
+    expect(after.sources.at(-1)).toMatchObject({ documentId: "handbook", editable: false });
+    expect(read).toHaveBeenCalledOnce();
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+  });
 });

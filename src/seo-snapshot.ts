@@ -1,5 +1,6 @@
 import { assertPath, formatPath, publishedId, readPath } from "./paths.js";
 import { snapshotFingerprint } from "./snapshot.js";
+import { validateSeoNotApplicable } from "./seo-report.js";
 import {
   inheritedImageText,
   isNonProse,
@@ -22,6 +23,7 @@ export type SeoQuery = (
 ) => Promise<unknown>;
 export function validateSeoMapping(mapping: SeoMapping | undefined) {
   if (!mapping) return;
+  validateSeoNotApplicable(mapping.notApplicable);
   for (const key of [
     "title",
     "description",
@@ -353,7 +355,8 @@ export async function collectSeoEvidence(input: {
       note("links", "Linked documents could not be read. Reference availability is unverified.");
     }
   }
-  const duplicates: SeoEvidence["duplicates"] = config.duplicates === false ? null : [];
+  const duplicates: SeoEvidence["duplicates"] =
+    config.duplicates === false || config.notApplicable?.duplicates ? null : [];
   const locale = input.mapping.locale ? readPath(doc, input.mapping.locale) : undefined;
   if (duplicates)
     for (const name of ["title", "description", "slug"] as const) {

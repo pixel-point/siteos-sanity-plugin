@@ -136,6 +136,33 @@ describe("Sanity SEO evidence adapter", () => {
     await expect(
       collect({ mapping: { ...mapping, seo: { title: ["title] | *[_type"] } } }),
     ).rejects.toThrow("field names");
+    await expect(
+      collect({ mapping: { ...mapping, seo: { notApplicable: { slug: " " } } } }),
+    ).rejects.toThrow("reason");
+    await expect(
+      collect({ mapping: { ...mapping, seo: { notApplicable: { slugs: "typo" } } as never } }),
+    ).rejects.toThrow("section ID");
+  });
+  it("skips explicitly disabled duplicate reads while retaining structured image and link evidence", async () => {
+    const query = vi.fn(async () => []);
+    const result = await collect({
+      query,
+      mapping: {
+        ...mapping,
+        seo: { notApplicable: { slug: "Fixed route.", duplicates: "Singleton page." } },
+      },
+    });
+    expect(result.duplicates).toBeNull();
+    expect(result.images).toHaveLength(1);
+    expect(result.links).toHaveLength(1);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("_id in $ids"),
+      { ids: ["child"] },
+      expect.any(AbortSignal),
+      "drafts",
+    );
+    expect(result).not.toHaveProperty("notApplicable");
   });
   it("reads duplicate pages beyond the first 100 matches using a stable cursor", async () => {
     const matches = Array.from({ length: 105 }, (_, n) => ({

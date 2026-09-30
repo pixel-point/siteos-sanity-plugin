@@ -259,7 +259,7 @@ export async function collectSnapshot(input: {
           doc,
           path,
           "unsupported-reference",
-          "Configure the related document type to include its content.",
+          `Related content of type "${related._type}" is not included. Add a content mapping for this document type.`,
         );
       else pending.push(related);
     }
