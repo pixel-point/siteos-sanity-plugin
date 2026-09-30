@@ -19,6 +19,17 @@ export type DocumentMapping = {
   references?: readonly FieldPath[];
   locale?: FieldPath;
   seo?: SeoMapping;
+  /** Language choices when this shared document is opened directly. References inherit the root page language. */
+  reviewLocales?: { options: readonly { id: string; title: string }[]; default: string };
+  /** Pure synchronous selection of real fields. Returned properties replace the corresponding static settings. */
+  resolve?: (
+    context: MappingContext,
+  ) => Partial<Pick<DocumentMapping, "fields" | "seo" | "references" | "exclude">>;
+};
+export type MappingContext = {
+  document: DocumentValue;
+  rootDocument: DocumentValue;
+  locale: string;
 };
 export type Source = {
   id: string;

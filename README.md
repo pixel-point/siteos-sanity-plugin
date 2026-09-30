@@ -6,7 +6,7 @@ Check SEO fields and review writing before publishing, directly in Sanity Studio
 a **🔍 SEO/GEO Audit** document tab with **SEO** first and **Text** second. An administrator connects
 the Studio to a SiteOS Project once; authorized Sanity editors use that shared connection.
 
-**Version 0.2.1.** Supported Studio versions and setup are listed below. Shared connection
+**Version 0.3.0.** Supported Studio versions and setup are listed below. Shared connection
 persistence has been tested against a real Sanity dataset. Access from a second actual Sanity
 editor account and custom Sanity roles has not yet been verified; confirm the secret-document
 permissions described below before a team rollout.
@@ -43,7 +43,7 @@ not add the document tab: configure the existing Structure tool next.
 For local development, install a reviewed packed artifact instead:
 
 ```sh
-pnpm add /absolute/path/to/siteoshq-sanity-0.2.1.tgz
+pnpm add /absolute/path/to/siteoshq-sanity-0.3.0.tgz
 ```
 
 ## 2. Configure your existing document types
@@ -140,6 +140,71 @@ The report stays visible, and corrections remain disabled until freshness is con
 check succeeds. A failed recheck keeps the previous result; completed parts of an interrupted Text
 check remain available. If browser storage is unavailable or full, results still survive navigation
 while Studio stays open and a message explains that reload persistence is unavailable.
+
+## Localized pages and shared documents
+
+Added in 0.3.0. Upgrade with `pnpm add @siteoshq/sanity@0.3.0`, then restart or redeploy Studio.
+Existing static mappings remain valid. To replace an all-language mapping, use the selection below;
+upgrading alone cannot infer your website's language and fallback rules.
+
+For one document per language, keep `locale: ["language"]` on the page mapping. A related shared
+language-neutral document inherits the root page's review language. Do not map every translation
+into the same review.
+
+For internationalized arrays, select each field separately using `localizedArrayPath`:
+
+```ts
+import { localizedArrayPath, type DocumentMapping } from "@siteoshq/sanity";
+
+const author: DocumentMapping = {
+  fields: [{ path: ["name"], role: "heading" }],
+  reviewLocales: {
+    options: [
+      { id: "en", title: "English" },
+      { id: "es", title: "Español" },
+    ],
+    default: "en",
+  },
+  resolve: ({ document, locale }) => ({
+    fields: [
+      { path: ["name"], role: "heading" },
+      ...["jobTitle", "description"].map((field) => ({
+        path: localizedArrayPath(document, [field], {
+          locale,
+          fallbackLocale: "en",
+          fallbackToFirst: true,
+        }),
+        role: "body" as const,
+      })),
+    ],
+  }),
+};
+```
+
+When the author is opened directly, **Review language** uses these choices. When included from a
+Spanish article, the article supplies Spanish even if the author's standalone default is English.
+Each field selects its requested translation, then the configured fallback, then the first non-empty
+string only when `fallbackToFirst: true`. It retains the actual selected `_key` and `value` path;
+Open field and eligible draft corrections target that source, including an English fallback.
+Whitespace is a present value, matching truthy string selection. Missing values remain mapped to
+the requested language so `required: true` can report them. Duplicate selected keys are rejected.
+`valuePath` optionally replaces the default `["value"]` within each keyed entry.
+
+`resolve({document, rootDocument, locale})` is a pure synchronous configuration callback. It may
+return `fields`, `seo`, `references` and `exclude`; each returned property replaces its static
+counterpart. Use it for object-based translations or other site-specific selection rules too.
+Return real field paths. Do not fetch data, mutate content, or produce synthetic documents in a
+resolver. Configure a page language or shared-document language choices before using a resolver.
+Resolver errors stop the check without clearing a saved result.
+
+Language choice and results survive Editor navigation and same-tab reload. Each language keeps
+its own SEO/Text results; changing selected translations or resolved settings invalidates the old
+review. No check starts merely by choosing a language. Existing static mappings still work.
+
+Website rules remain explicit: use `titleFallback`/`descriptionFallback` for the defaults the site
+actually uses, and `seo.notApplicable` for checks outside the document's scope. The plugin cannot
+infer a Next.js metadata template from a CMS schema. Computed author titles and pagination-specific
+indexing still require matching configuration or a rendered website audit.
 
 ## SEO mapping and coverage
 

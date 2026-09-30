@@ -11,6 +11,7 @@ import {
   Tab,
   TabList,
   TabPanel,
+  Select,
 } from "@sanity/ui";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
@@ -29,13 +30,14 @@ import { textReviewCoverage } from "./text-review.js";
 import { prepareCorrection, validateCheckResult } from "./corrections.js";
 import { formatPath, publishedId } from "./paths.js";
 import { collectSnapshot, snapshotFingerprint } from "./snapshot.js";
+import { reviewLocale, resolveDocumentMapping, serializeReviewInput } from "./mappings.js";
 import { collectSeoEvidence } from "./seo-snapshot.js";
 import { validateSeoResult } from "./seo-result.js";
 import { SeoPanel } from "./seo-panel.js";
 import { seoNotApplicable } from "./seo-report.js";
 import { useSiteosConnection } from "./use-connection.js";
 import { siteosOrigin } from "./connection.js";
-import { reviewSessionCache, reviewSessionKey } from "./review-session.js";
+import { reviewSessionCache, reviewSessionKey, reviewLocaleSessionKey } from "./review-session.js";
 import { useDocumentStamp, useReviewFreshness, useReviewSession } from "./use-review-session.js";
 import type {
   Connection,
@@ -74,7 +76,7 @@ export function ReviewPanel({
   latestSync.current = syncState;
   const tabsId = useId();
   const [connection, setConnection] = useState<Connection | null>(() => adapter?.current() ?? null);
-  const scope =
+  const baseScope =
     document && user
       ? reviewSessionKey({
           sanityProjectId,
@@ -92,6 +94,12 @@ export function ReviewPanel({
           },
         })
       : null;
+  const preference = useReviewSession(baseScope);
+  const mapping = document ? options.documentTypes[document._type] : undefined;
+  const locale =
+    document && mapping ? reviewLocale(document, mapping, preference.review.preferredLocale) : null;
+  // Keep the legacy key for non-localized documents; language-specific results cannot mix.
+  const scope = reviewLocaleSessionKey(baseScope, locale);
   const session = useReviewSession(scope);
   const { section, text: textReview, seo: seoReview } = session.review;
   const snapshot = textReview?.input ?? null;
@@ -119,7 +127,7 @@ export function ReviewPanel({
   const operation = useRef<AbortController | null>(null);
   const latest = useRef(document);
   latest.current = document;
-  const serialized = JSON.stringify({ document, mappings: options.documentTypes });
+  const serialized = serializeReviewInput(document, options.documentTypes, locale);
   const latestSerialized = useRef(serialized);
   latestSerialized.current = serialized;
   const documentStamp = useDocumentStamp(serialized);
@@ -177,6 +185,7 @@ export function ReviewPanel({
       schema,
       sanityProjectId,
       dataset,
+      locale,
       signal,
       readDocuments: async (ids, readSignal) =>
         client.fetch<DocumentValue[]>("*[_id in $ids]", { ids }, { signal: readSignal }),
@@ -192,6 +201,7 @@ export function ReviewPanel({
       schema,
       sanityProjectId,
       dataset,
+      locale,
       signal,
       query: (query, params, querySignal, perspective) =>
         client
@@ -306,7 +316,13 @@ export function ReviewPanel({
       if (!connection || !adapter?.checkSeo || !latest.current)
         throw new Error("SEO checks are not available in this connection adapter.");
       const before = latestSerialized.current;
-      const notApplicable = seoNotApplicable(options.documentTypes[latest.current._type]?.seo);
+      const notApplicable = seoNotApplicable(
+        resolveDocumentMapping(options.documentTypes[latest.current._type], {
+          document: latest.current,
+          rootDocument: latest.current,
+          locale,
+        }).seo,
+      );
       const evidence = await collectSeo(signal);
       const stamp = await snapshotFingerprint({ serialized: before });
       signal.throwIfAborted();
@@ -453,6 +469,40 @@ export function ReviewPanel({
             </Card>
           )}
         </Stack>
+        {mapping?.reviewLocales && !mapping.locale ? (
+          <Flex align="center" gap={3} wrap="wrap">
+            <Text as="label" htmlFor={`${tabsId}-locale`} size={1}>
+              Review language
+            </Text>
+            <Box style={{ minWidth: 180 }}>
+              <Select
+                id={`${tabsId}-locale`}
+                value={locale ?? ""}
+                disabled={!!busy}
+                onChange={(event) => {
+                  reviewSessionCache.update(baseScope, (review) => ({
+                    ...review,
+                    preferredLocale: event.currentTarget.value,
+                  }));
+                  setError(null);
+                  setNotice(null);
+                  setVisibleSources(50);
+                  setVisibleFindings(50);
+                }}
+              >
+                {mapping.reviewLocales.options.map((language) => (
+                  <option key={language.id} value={language.id}>
+                    {language.title}
+                  </option>
+                ))}
+              </Select>
+            </Box>
+          </Flex>
+        ) : locale ? (
+          <Text size={1} muted>
+            Review language: {locale}
+          </Text>
+        ) : null}
         <TabList gap={2} aria-label="Review type">
           <Tab
             id={`${tabsId}-seo`}

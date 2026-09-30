@@ -14,6 +14,7 @@ export type SavedReview<T, R> = {
 };
 export type ReviewSession = {
   section: "seo" | "text";
+  preferredLocale?: string;
   text: SavedReview<ContentSnapshot, CheckResult> | null;
   seo: (SavedReview<SeoEvidence, SeoCheckResult> & { notApplicable?: SeoNotApplicable }) | null;
 };
@@ -47,6 +48,14 @@ export function reviewSessionKey(input: {
   ])}`;
 }
 
+/** Shared-document language choices and their saved results occupy separate cache records. */
+export function reviewLocaleSessionKey(
+  baseKey: string | null,
+  locale: string | null,
+): string | null {
+  return baseKey && locale ? `${baseKey}:locale:${JSON.stringify(locale)}` : baseKey;
+}
+
 type StoragePort = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 function readSaved(value: string, key: string): ReviewSession {
   const envelope = JSON.parse(value);
@@ -54,6 +63,8 @@ function readSaved(value: string, key: string): ReviewSession {
   const review = envelope.review as ReviewSession;
   if (!review || !["seo", "text"].includes(review.section))
     throw new Error("Invalid saved review.");
+  if (review.preferredLocale !== undefined && typeof review.preferredLocale !== "string")
+    throw new Error("Invalid saved review language.");
   for (const saved of [review.text, review.seo]) {
     if (saved === null) continue;
     if (

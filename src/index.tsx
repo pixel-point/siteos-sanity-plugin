@@ -48,3 +48,5 @@ export const siteos = definePlugin<SiteosPluginOptions>((options) => {
     },
   };
 });
+
+export { localizedArrayPath } from "./mappings.js";

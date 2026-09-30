@@ -1,3 +1,4 @@
+import { resolveDocumentMapping, reviewLocale } from "./mappings.js";
 import { assertPath, formatPath, publishedId, readPath } from "./paths.js";
 import { snapshotFingerprint } from "./snapshot.js";
 import { validateSeoNotApplicable } from "./seo-report.js";
@@ -66,10 +67,17 @@ export async function collectSeoEvidence(input: {
   query: SeoQuery;
   signal: AbortSignal;
   schema?: StudioSchema;
+  locale?: string | null;
 }): Promise<SeoEvidence> {
   input.signal.throwIfAborted();
-  const doc = structuredClone(input.document),
-    config = input.mapping.seo ?? {};
+  const doc = structuredClone(input.document);
+  const locale = reviewLocale(doc, input.mapping, input.locale);
+  const mapping = resolveDocumentMapping(input.mapping, {
+    document: doc,
+    rootDocument: doc,
+    locale,
+  });
+  const config = mapping.seo ?? {};
   validateSeoMapping(config);
   if (!doc._id || !doc._rev || doc._id.startsWith("versions."))
     throw new Error(
@@ -110,14 +118,14 @@ export async function collectSeoEvidence(input: {
       };
     return { path, value };
   };
-  const titlePath = config.title ?? input.mapping.fields.find((f) => f.role === "title")?.path;
+  const titlePath = config.title ?? mapping.fields.find((f) => f.role === "title")?.path;
   const descriptionPath =
-    config.description ?? input.mapping.fields.find((f) => f.role === "description")?.path;
+    config.description ?? mapping.fields.find((f) => f.role === "description")?.path;
   const portablePaths =
     config.portableText ??
-    input.mapping.fields.filter((f) => f.format === "portableText").map((f) => f.path);
+    mapping.fields.filter((f) => f.format === "portableText").map((f) => f.path);
   const contentPaths =
-    config.content ?? input.mapping.fields.filter((f) => f.format === "content").map((f) => f.path);
+    config.content ?? mapping.fields.filter((f) => f.format === "content").map((f) => f.path);
   const noIndex = config.noIndex ? readPath(doc, config.noIndex) : undefined;
   if (noIndex != null && typeof noIndex !== "boolean")
     note("indexing", "The noindex mapping must contain a boolean.");
@@ -186,7 +194,7 @@ export async function collectSeoEvidence(input: {
       path,
       schema: schemaAt(input.schema?.get(doc._type), doc, path),
       signal: input.signal,
-      exclude: input.mapping.exclude,
+      exclude: mapping.exclude,
       onIssue: (_path, message) => {
         for (const section of ["headings", "images", "links"] as const) note(section, message);
       },
@@ -357,7 +365,6 @@ export async function collectSeoEvidence(input: {
   }
   const duplicates: SeoEvidence["duplicates"] =
     config.duplicates === false || config.notApplicable?.duplicates ? null : [];
-  const locale = input.mapping.locale ? readPath(doc, input.mapping.locale) : undefined;
   if (duplicates)
     for (const name of ["title", "description", "slug"] as const) {
       const value = fields[name];
@@ -439,5 +446,5 @@ export async function collectSeoEvidence(input: {
     duplicates,
     limitations,
   };
-  return { ...evidence, fingerprint: await snapshotFingerprint(evidence) };
+  return { ...evidence, fingerprint: await snapshotFingerprint({ evidence, mapping, locale }) };
 }

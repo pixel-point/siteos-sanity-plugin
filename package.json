@@ -1,6 +1,6 @@
 {
   "name": "@siteoshq/sanity",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": false,
   "description": "SiteOS SEO and content checks inside Sanity Studio",
   "homepage": "https://github.com/pixel-point/siteos-sanity-plugin#readme",

@@ -1,4 +1,6 @@
-import { assertPath, publishedId, readPath } from "./paths.js";
+import { resolveDocumentMapping, reviewLocale, validateMappings } from "./mappings.js";
+export { validateMappings } from "./mappings.js";
+import { publishedId, readPath } from "./paths.js";
 import {
   isNonProse,
   portableText,
@@ -18,28 +20,6 @@ import type {
   SourceIssue,
 } from "./types.js";
 
-export function validateMappings(mappings: Record<string, DocumentMapping>): void {
-  if (!Object.keys(mappings).length) throw new Error("Configure at least one document type.");
-  for (const [type, mapping] of Object.entries(mappings)) {
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(type) || !mapping.fields.length)
-      throw new Error("Each document type requires at least one field.");
-    const paths = new Set<string>();
-    for (const field of mapping.fields) {
-      assertPath(field.path);
-      const key = JSON.stringify(field.path);
-      if (paths.has(key)) throw new Error("Map each field only once.");
-      paths.add(key);
-      if (!["title", "description", "heading", "body"].includes(field.role))
-        throw new Error("Invalid content role.");
-      if (field.format && !["text", "portableText", "content"].includes(field.format))
-        throw new Error("Invalid content format.");
-    }
-    for (const path of [...(mapping.references ?? []), ...(mapping.exclude ?? [])])
-      assertPath(path);
-    if (mapping.locale) assertPath(mapping.locale);
-  }
-}
-
 /** Fingerprints local complete evidence. Only transport requests have a byte bound. */
 export async function snapshotFingerprint(value: object): Promise<string> {
   const hash = await crypto.subtle.digest(
@@ -56,6 +36,7 @@ export async function collectSnapshot(input: {
   dataset: string;
   readDocuments: ReadDocuments;
   schema?: StudioSchema;
+  locale?: string | null;
   signal?: AbortSignal;
 }): Promise<ContentSnapshot> {
   validateMappings(input.mappings);
@@ -69,6 +50,8 @@ export async function collectSnapshot(input: {
   const perspective = root._id.startsWith("drafts.") ? "drafts" : "published";
   const mapping = input.mappings[root._type];
   if (!mapping) throw new Error("This document type has no content mapping.");
+  const locale = reviewLocale(root, mapping, input.locale);
+  const resolvedMappings: DocumentMapping[] = [];
   const sources: Source[] = [],
     issues: SourceIssue[] = [],
     documents: ContentSnapshot["documents"] = [];
@@ -131,8 +114,14 @@ export async function collectSnapshot(input: {
     visited.add(id);
     if (!doc._rev || !doc._type)
       throw new Error("Sanity returned a document without revision metadata.");
-    const selected = input.mappings[doc._type];
-    if (!selected) continue;
+    const configured = input.mappings[doc._type];
+    if (!configured) continue;
+    const selected = resolveDocumentMapping(configured, {
+      document: doc,
+      rootDocument: root,
+      locale,
+    });
+    resolvedMappings.push(selected);
     documents.push({ id: doc._id, type: doc._type, revision: doc._rev });
     const references: { value: unknown; path: FieldPath }[] = [];
     for (const field of selected.fields) {
@@ -264,7 +253,6 @@ export async function collectSnapshot(input: {
       else pending.push(related);
     }
   }
-  const locale = mapping.locale ? readPath(root, mapping.locale) : null;
   const snapshot: Omit<ContentSnapshot, "fingerprint"> = {
     version: 1,
     sanityProjectId: input.sanityProjectId,
@@ -276,5 +264,5 @@ export async function collectSnapshot(input: {
     sources,
     issues,
   };
-  return { ...snapshot, fingerprint: await snapshotFingerprint(snapshot) };
+  return { ...snapshot, fingerprint: await snapshotFingerprint({ snapshot, resolvedMappings }) };
 }

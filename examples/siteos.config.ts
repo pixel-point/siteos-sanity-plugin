@@ -1,4 +1,8 @@
-import type { SiteosPluginOptions } from "@siteoshq/sanity";
+import {
+  localizedArrayPath,
+  type DocumentMapping,
+  type SiteosPluginOptions,
+} from "@siteoshq/sanity";
 
 // Adapt document type names and field paths to your existing Sanity schemas.
 // The example expects page.title, page.description, page.body (Portable Text),
@@ -33,3 +37,48 @@ export const siteosOptions = {
     },
   },
 } satisfies SiteosPluginOptions;
+
+// Optional example for shared authors with internationalized-array fields.
+// The root article maps locale: ["language"]. References inherit that article's language.
+export const localizedAuthorMapping: DocumentMapping = {
+  fields: [{ path: ["name"], role: "heading" }],
+  reviewLocales: {
+    options: [
+      { id: "en", title: "English" },
+      { id: "es", title: "Español" },
+    ],
+    default: "en",
+  },
+  resolve: ({ document, locale }) => ({
+    fields: [
+      { path: ["name"], role: "heading" },
+      ...["jobTitle", "description"].map((field) => ({
+        path: localizedArrayPath(document, [field], {
+          locale,
+          fallbackLocale: "en",
+          fallbackToFirst: true,
+        }),
+        role: "body" as const,
+      })),
+    ],
+  }),
+};
+
+// Use the same selection for a shared category name. Merge the project's existing
+// SEO fields/settings explicitly if the website uses them for category metadata.
+export const localizedCategoryMapping: DocumentMapping = {
+  fields: [{ path: ["name", { _key: "en" }, "value"], role: "heading" }],
+  reviewLocales: localizedAuthorMapping.reviewLocales,
+  resolve: ({ document, locale }) => ({
+    fields: [
+      {
+        path: localizedArrayPath(document, ["name"], {
+          locale,
+          fallbackLocale: "en",
+          fallbackToFirst: true,
+        }),
+        role: "heading",
+      },
+    ],
+  }),
+};

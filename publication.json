@@ -50,6 +50,8 @@
     "src/content-tree.ts",
     "src/text-batches.ts",
     "src/seo-batches.ts",
-    "src/large-content.test.ts"
+    "src/large-content.test.ts",
+    "src/mappings.ts",
+    "src/mappings.test.ts"
   ]
 }
